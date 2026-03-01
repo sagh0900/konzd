@@ -1,24 +1,81 @@
 # konzd
 
-**Kubernetes Operator Native Distribution**
+**Kubernetes Operator Native Zabbix Distribution**
 
-konzd is a curated, production-ready distribution of Kubernetes Operator CRDs and example
-manifests. It provides the declarative API layer — Custom Resource Definitions, annotated
-deployment patterns, and reference configurations — without bundling any controller logic.
+konzd is a curated, production-ready distribution of CRDs and example manifests for running
+[Zabbix](https://www.zabbix.com) on Kubernetes via a Kubernetes Operator. It provides the
+declarative API layer — Custom Resource Definitions, annotated deployment patterns, and
+reference configurations — without bundling any controller logic.
 
 You bring the operator binary. konzd brings the structure.
 
 ---
 
+## About Zabbix
+
+[Zabbix](https://www.zabbix.com) is a battle-tested, open-source enterprise monitoring
+platform that has been in production use since 2001. It provides comprehensive, real-time
+visibility into infrastructure health — from bare-metal servers and network switches to
+virtual machines, cloud workloads, containers, and business applications.
+
+### Why Zabbix?
+
+| Capability | Details |
+|-----------|---------|
+| **Scale** | Handles millions of metrics per second; proven in environments with 100,000+ hosts |
+| **Protocol support** | Zabbix Agent/Agent2, SNMP v1/v2c/v3, IPMI, JMX, HTTP checks, custom scripts |
+| **Distributed monitoring** | Proxy architecture spans geographically dispersed sites without VPN tunnels |
+| **Alerting** | Built-in escalation policies, maintenance windows, and dependency-based suppression |
+| **Dashboards & reports** | Web-based dashboards, scheduled PDF reports via headless Chromium (Web Service) |
+| **License** | 100% open-source, Apache License 2.0 — no licensing costs, no vendor lock-in |
+
+### Zabbix Component Architecture
+
+A full Zabbix deployment consists of several cooperating components, each represented by a
+Custom Resource in konzd:
+
+| CRD | Zabbix Component | Role |
+|-----|-----------------|------|
+| `ZabbixServer` | `zabbix_server` | Core monitoring engine — collects data, evaluates triggers, fires alerts |
+| `ZabbixWeb` | `zabbix-web-nginx-pgsql` | Web frontend — REST API + browser dashboard (PHP/Nginx) |
+| `ZabbixWebService` | `zabbix_web_service` | Headless Chromium — generates scheduled PDF reports |
+| `ZabbixProxy` | `zabbix_proxy` | Distributed collection proxy — offloads polling from the server |
+| `ZabbixAgent` | `zabbix_agent2` | Host-side agent — active/passive metric collection on monitored nodes |
+| `ZabbixJMX` | `zabbix_java_gateway` | JMX gateway — bridges Zabbix to Java application MBeans |
+| `ZabbixSNMPTrapper` | SNMP trap receiver | Receives inbound SNMP traps from network devices |
+| `ZabbixDatabase` | CloudNativePG cluster | PostgreSQL backend managed by the CNPG operator |
+| `ZabbixSuite` | (aggregate) | Orchestrates all components as a single declarative unit |
+
+### Running Zabbix on Kubernetes — the challenge
+
+Zabbix was originally designed for VM/bare-metal deployments. Running it on Kubernetes
+introduces operational complexity that konzd is designed to address:
+
+- **Leader election**: Only one `zabbix_server` instance may be active at a time; standbys
+  must remain dormant until the leader fails. konzd's operator manages this via a Kubernetes
+  Lease + EndpointSlice routing pattern, achieving ~5–25s failover RTO.
+- **Schema migration safety**: Zabbix database schema upgrades must run exactly once per
+  version bump; the operator gates the migration Job with deterministic naming and
+  idempotent state-machine checks.
+- **HA database**: Zabbix requires PostgreSQL; konzd integrates with
+  [CloudNativePG](https://cloudnative-pg.io) for automatic primary failover, connection
+  pooling (PgBouncer), and streaming replication — all declaratively configured.
+- **Distributed proxies**: Remote-site Zabbix Proxies, PSK-encrypted agent connections,
+  and SNMP trap receivers are first-class CRDs, not afterthoughts.
+
+---
+
 ## Overview
 
-Modern Kubernetes operators expose their functionality through Custom Resource Definitions
-(CRDs). Deploying, versioning, and sharing those CRDs consistently across clusters and teams
-is non-trivial. konzd solves this by packaging:
+konzd packages the full Zabbix-on-Kubernetes API surface into a versioned, GitOps-friendly
+repository. Deploying, versioning, and sharing Zabbix CRDs consistently across clusters and
+teams is non-trivial. konzd solves this by providing:
 
-- **CRDs** — the API surface of one or more operators, ready to `kubectl apply`
-- **Examples** — annotated, copy-paste-ready manifests demonstrating every deployment pattern
-- **Reference configs** — field-level documentation embedded directly in YAML comments
+- **CRDs** — the complete Zabbix operator API surface, ready to `kubectl apply`
+- **Examples** — annotated, copy-paste-ready manifests for every deployment pattern (dev
+  through production HA)
+- **Reference configs** — field-level documentation embedded directly in YAML comments,
+  covering every option in every Zabbix component CR
 
 konzd follows a convention-over-configuration philosophy: every file is numbered, every
 directory is self-describing, and every manifest is annotated with the *why*, not just the
@@ -28,6 +85,8 @@ directory is self-describing, and every manifest is annotated with the *why*, no
 
 - konzd is **not** an operator runtime — it does not run any controllers
 - konzd is **not** a Helm chart — it uses plain Kubernetes YAML for maximum transparency
+- konzd is **not** a replacement for [Zabbix itself](https://www.zabbix.com/download) — you
+  still need the Zabbix container images and a compatible operator binary
 - konzd is **not** opinionated about your GitOps tooling — it works with Flux, ArgoCD, or
   plain `kubectl`
 
@@ -333,5 +392,5 @@ Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
 ---
 
-*konzd — Kubernetes Operator Native Distribution*
+*konzd — Kubernetes Operator Native Zabbix Distribution*
 *Maintained by SaiKrishna Ghanta, SRE — https://github.com/sagh0900/konzd*
