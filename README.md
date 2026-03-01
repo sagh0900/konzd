@@ -7,7 +7,78 @@ konzd is a curated, production-ready distribution of CRDs and example manifests 
 declarative API layer — Custom Resource Definitions, annotated deployment patterns, and
 reference configurations — without bundling any controller logic.
 
-You bring the operator binary. konzd brings the structure.
+> [!IMPORTANT]
+> **Applying these CRDs registers API types in your cluster, but nothing will reconcile
+> them.** A `kubectl apply` of a `ZabbixServer` CR without a running controller produces
+> exactly one result: a stored object in etcd. No pods, no Services, no EndpointSlices, no
+> Zabbix — nothing. The controller is the hard 95% of the work. See
+> [The Operator](#the-operator) below before going further.
+
+---
+
+## The Operator
+
+konzd ships the **API contract** (CRDs + example manifests). The **controller** — the
+process that watches those CRDs and drives the cluster toward the declared state — is a
+separate binary that must be running for any of this to be functional.
+
+### What the controller does
+
+The controller is responsible for every non-trivial operational concern:
+
+| Responsibility | What the controller handles |
+|---|---|
+| Pod lifecycle | Creates, updates, and deletes Deployments for ZabbixServer, ZabbixWeb, ZabbixProxy, etc. |
+| Database provisioning | Reads `ZabbixDatabase` CR → drives CloudNativePG `Cluster` + PgBouncer `Pooler` creation |
+| Schema migrations | Runs a deterministic one-shot Job per version bump; gates on success; halts on failure |
+| HA traffic routing | Watches Zabbix's `ha_node` active/standby status; updates the selector-less Service EndpointSlice to point at the currently-active pod |
+| TLS and credentials | Mounts DB TLS certificates and resolves credential secrets into container env vars |
+| Status aggregation | Rolls up all component conditions into `ZabbixSuite.status` for a single-pane health view |
+| Prometheus metrics | Exposes leader transition counters, DB readiness gauges, endpoint update counters |
+
+Without the controller running, a `ZabbixSuite` CR is an inert object. The cluster state
+does not change. No Zabbix workloads are created.
+
+### Getting the controller
+
+The reference implementation is available at:
+
+```
+ghcr.io/sagh0900/zabbix-operator:latest   # current stable
+ghcr.io/sagh0900/zabbix-operator:2.9      # pinned version (recommended for production)
+```
+
+Deploy the operator into its own namespace before applying any CRs from konzd:
+
+```bash
+# 1. Install CRDs from konzd
+kubectl apply -f https://raw.githubusercontent.com/sagh0900/konzd/main/crds/all-crds-bundled.yaml
+
+# 2. Create the operator namespace and RBAC
+kubectl create namespace zabbix-operator
+# (apply your operator RBAC manifest here — ClusterRole, ClusterRoleBinding, ServiceAccount)
+
+# 3. Deploy the operator
+kubectl create deployment zabbix-operator \
+  --image=ghcr.io/sagh0900/zabbix-operator:2.9 \
+  --namespace=zabbix-operator
+
+# 4. Verify it is running and has acquired the controller leader lease
+kubectl logs -n zabbix-operator -l app=zabbix-operator | grep "Starting Controller"
+```
+
+> [!NOTE]
+> The operator image (`ghcr.io/sagh0900/zabbix-operator`) is currently under active
+> development. The CRD API surface (this repository) is at `v1alpha1` and may change
+> between minor versions. Pin to a specific version tag in production.
+
+### Controller version compatibility
+
+| konzd CRDs | Operator image | Notes |
+|---|---|---|
+| `main` branch | `2.9` | Current — Prometheus metrics, DB gate, ExtraEnv, credential control, DB TLS |
+| `main` branch | `2.8` | Previous — same features; TCP liveness probe removed |
+| `main` branch | `< 2.5` | Missing credential control and DB TLS; not recommended |
 
 ---
 
@@ -90,10 +161,11 @@ directory is self-describing, and every manifest is annotated with the *why*, no
 
 ### What konzd is NOT
 
-- konzd is **not** an operator runtime — it does not run any controllers
+- konzd is **not** an operator runtime — it ships no controller binary and reconciles
+  nothing on its own; see [The Operator](#the-operator) for what you need alongside it
 - konzd is **not** a Helm chart — it uses plain Kubernetes YAML for maximum transparency
 - konzd is **not** a replacement for [Zabbix itself](https://www.zabbix.com/download) — you
-  still need the Zabbix container images and a compatible operator binary
+  still need the Zabbix container images
 - konzd is **not** opinionated about your GitOps tooling — it works with Flux, ArgoCD, or
   plain `kubectl`
 
@@ -141,7 +213,7 @@ konzd/
 | Kubernetes | ≥ 1.25 | CRDs use `apiextensions.k8s.io/v1` |
 | kubectl | ≥ 1.25 | For applying manifests |
 | CloudNativePG operator | ≥ 1.22 | Required for database examples |
-| An operator binary | current | The CRDs alone do nothing without a controller |
+| **Zabbix operator** | **2.9+** | **Required — CRDs do nothing without a running controller. See [The Operator](#the-operator).** |
 
 ### 1. Install all CRDs (single command)
 
