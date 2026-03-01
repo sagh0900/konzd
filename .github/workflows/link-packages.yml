@@ -7,7 +7,10 @@ on:
 
 permissions:
   contents: read
-  packages: write   # required to push to ghcr.io via GITHUB_TOKEN
+  # Note: packages:write is NOT used here — we authenticate with CR_PAT (a personal
+  # access token with write:packages scope) because these packages were originally
+  # published from sagh0900/zabbix-operator. The CR_PAT has user-level write access
+  # to all packages under sagh0900 regardless of which repo they originated from.
 
 jobs:
   link-packages:
@@ -37,14 +40,15 @@ jobs:
           - { package: zabbix-migration-sentinel, tag: "2.0"    }
 
     steps:
-      - name: Login to GHCR via GITHUB_TOKEN
-        # CRITICAL: must use GITHUB_TOKEN (not a PAT) so GitHub auto-links the pushed
-        # package to THIS repository (sagh0900/konzd) when docker push completes.
+      - name: Login to GHCR via CR_PAT
+        # Use a PAT (stored as secret CR_PAT) with write:packages scope.
+        # These packages originated from sagh0900/zabbix-operator so GITHUB_TOKEN
+        # from this repo does not have write access. The PAT has user-level access.
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: sagh0900
+          password: ${{ secrets.CR_PAT }}
 
       - name: Pull existing image
         run: |
@@ -52,14 +56,14 @@ jobs:
 
       - name: Rebuild with konzd source label and push
         # Building FROM the existing image + adding the source label creates only a
-        # new config blob (no layer re-upload). The docker push is what triggers
-        # GitHub's automatic package-to-repository linking.
+        # new config blob (no layer re-upload). GitHub links the package to the repo
+        # specified in org.opencontainers.image.source when the push completes.
         env:
           IMAGE: ghcr.io/sagh0900/${{ matrix.package }}:${{ matrix.tag }}
           REPO_URL: https://github.com/${{ github.repository }}
         run: |
           # Write a minimal Dockerfile that re-labels the image
-          cat > Dockerfile.relabel << EOF
+          cat > Dockerfile.relabel << 'EOF'
           FROM ${IMAGE}
           LABEL org.opencontainers.image.source="${REPO_URL}"
           LABEL org.opencontainers.image.url="${REPO_URL}"
@@ -67,10 +71,13 @@ jobs:
           LABEL org.opencontainers.image.licenses="Apache-2.0"
           EOF
 
+          # Substitute env vars into the Dockerfile (heredoc with quotes prevents expansion)
+          sed -i "s|\${IMAGE}|${IMAGE}|g; s|\${REPO_URL}|${REPO_URL}|g" Dockerfile.relabel
+
           # Build (only config layer changes; all image layers are cached from the pull above)
           docker build -f Dockerfile.relabel -t "${IMAGE}" .
 
-          # Push using GITHUB_TOKEN — this is what triggers GitHub's automatic
-          # package-to-repo linking for sagh0900/konzd
+          # Push — GitHub reads org.opencontainers.image.source from the image config
+          # and automatically links this package to sagh0900/konzd
           docker push "${IMAGE}"
           echo "Pushed: ${IMAGE}"
