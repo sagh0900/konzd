@@ -1,0 +1,85 @@
+---
+# ZabbixSNMPTrapper — Production HA / Decentralized
+#
+# DECENTRALIZED OWNERSHIP: Network Team owns this CR.
+# ZabbixSuite references it via spec.snmpTrapper.existingRef.name = "my-zabbix-snmptrapper".
+#
+# SNMP Trapper receives unsolicited SNMP traps from network devices (switches, routers,
+# UPS, servers) and forwards them to the Zabbix server's trapper process.
+#
+# DEPLOYMENT STRATEGIES:
+#
+#   DaemonSet + hostNetwork: true (recommended for receiving traps on all nodes)
+#   ────────────────────────────────────────────────────────────────────────────
+#   - One pod per node; snmptrapd listens on UDP/162 of the node's real IP
+#   - Network devices send traps to any cluster node IP (behind a VIP or DNS round-robin)
+#   - No LoadBalancer needed; devices use node IPs directly
+#   - hostNetwork bypasses kube-proxy (important for UDP/162 which kube-proxy handles poorly)
+#
+#   Deployment + LoadBalancer (recommended when a dedicated trap receiver IP is required)
+#   ─────────────────────────────────────────────────────────────────────────────────────
+#   - Fixed replica count behind a LoadBalancer Service with a stable external IP
+#   - Network devices send traps to the LoadBalancer IP → kube-proxy → pod
+#   - UDP load balancing works on most cloud providers (AWS NLB, GCP Network LB)
+#   - Note: UDP source IP preservation requires externalTrafficPolicy: Local
+#
+# SNMP TRAP FILE:
+#   snmptrapd writes received traps to a file; zabbix-server reads and processes it.
+#   Both processes share the file via a shared volume (EmptyDir in each pod).
+#   The file path must match ZBX_SNMPTRAPPERFILE in the server config.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSNMPTrapper
+metadata:
+  name: my-zabbix-snmptrapper
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-snmptrapper
+    app.kubernetes.io/instance: my-zabbix
+    app.kubernetes.io/component: snmptrapper
+    team: network-team
+  annotations:
+    team.example.com/owner: "network-team@example.com"
+
+spec:
+  image: "zabbix/zabbix-snmptrapper:ubuntu-7.4-latest"
+
+  # Injected by ZabbixSuite in link mode.
+  serverRef:
+    name: my-zabbix-server
+
+  # DaemonSet mode with hostNetwork: one pod per node on the real node IP.
+  # Change to "Deployment" and set hostNetwork: false if using LoadBalancer pattern.
+  mode: DaemonSet
+  hostNetwork: true   # required in DaemonSet mode so snmptrapd binds node IP
+
+  port: 162
+  snmpTrapperFile: "/tmp/zabbix_traps.tmp"
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+  # ── Alternative: Deployment + LoadBalancer pattern ────────────────────────
+  # Uncomment and delete the DaemonSet block above to use this pattern:
+  #
+  # mode: Deployment
+  # replicas: 2
+  # hostNetwork: false
+  # service:
+  #   type: LoadBalancer
+  #   labels:
+  #     monitoring.example.com/component: "zabbix-snmptrapper"
+  #   annotations:
+  #     # AWS NLB: preserve UDP source IP for SNMP community string validation
+  #     service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+  #   ports:
+  #     - name: snmp-trap
+  #       port: 162
+  #       targetPort: 162
+  #       protocol: UDP
+  # # Preserve source IP so Zabbix can match traps to source host addresses
+  # externalTrafficPolicy: Local

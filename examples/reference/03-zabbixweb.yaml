@@ -1,0 +1,114 @@
+# ZabbixWeb — Standalone Manifest (Full Reference)
+#
+# PURPOSE
+#   A ZabbixWeb CR deploys the Zabbix web frontend (Nginx + PHP-FPM) as a Kubernetes
+#   Deployment. It connects to the database via PgBouncer and to the Zabbix server
+#   via the active-leader Service.
+#
+# DEPENDENCIES
+#   - ZabbixServer CR must exist and be referenced via spec.serverRef.name.
+#   - The operator injects DB credentials and server address as env vars automatically.
+#   - Nginx listens on port 8080 (non-root); the Service exposes port 80 → targetPort 8080.
+#
+# MAINTENANCE MODE
+#   When spec.maintenanceMode: true, the Deployment continues running but serves
+#   HTTP 503 with a maintenance page. The Service endpoint remains alive (health
+#   probes still pass), ensuring Ingress does not remove the backend. Flip back to
+#   false to resume normal operation without restarting pods.
+#
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixWeb
+metadata:
+  name: my-zabbix-web
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-web
+    app.kubernetes.io/instance: my-zabbix
+
+spec:
+  # ── Container image ────────────────────────────────────────────────────────
+  image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"
+
+  # ── Replica count ──────────────────────────────────────────────────────────
+  # Scale out for higher availability; Nginx + PHP-FPM are stateless.
+  replicas: 2
+
+  # ── ZabbixServer reference ─────────────────────────────────────────────────
+  # Must match the ZabbixServer CR name in the same namespace.
+  # The operator auto-sets ZBX_SERVER_HOST to the "<serverRef>-active" Service DNS name.
+  serverRef:
+    name: my-zabbix-server
+
+  # ── Maintenance mode ───────────────────────────────────────────────────────
+  # Set true to serve HTTP 503 "under maintenance" without scaling to 0.
+  # Useful during upgrades or planned outages.
+  maintenanceMode: false
+
+  # ── Compute resources ──────────────────────────────────────────────────────
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # ── Ingress configuration ──────────────────────────────────────────────────
+  ingress:
+    # Set false to skip Ingress creation (direct ClusterIP access only).
+    enabled: true
+
+    # IngressClass — "traefik", "nginx", "haproxy", etc.
+    className: traefik
+
+    # Primary hostname for the Ingress rule and TLS certificate.
+    host: "zabbix.example.com"
+
+    # Path and matching strategy for the primary host.
+    path: "/"
+    pathType: Prefix     # Exact | Prefix | ImplementationSpecific
+
+    # Additional hosts (e.g. internal FQDN aliases or staging hostnames).
+    # extraHosts:
+    #   - host: "zabbix-internal.corp.example.com"
+    #     path: "/"
+    #     pathType: Prefix
+
+    # TLS — cert-manager will issue and renew the certificate automatically
+    # when the cluster-issuer annotation is set.
+    tls:
+      - secretName: zabbix-web-tls
+        hosts:
+          - "zabbix.example.com"
+
+    # Annotations applied to the Ingress object.
+    # cert-manager cluster-issuer for automatic TLS:
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt-production"
+
+    # Traefik-specific: restrict to the HTTPS entry point only.
+    # Remove this section if you're not using Traefik.
+    entryPoints:
+      - websecure
+
+    # Traefik Middleware CRs to apply to this Ingress route.
+    # The operator auto-composes the traefik.ingress.kubernetes.io/router.middlewares annotation.
+    middlewareRefs:
+      - zabbix-web-compress   # gzip/brotli response compression
+      - zabbix-web-headers    # security response headers (HSTS, CSP, X-Frame-Options)
+
+  # ── TLS for web-frontend (uncomment for mTLS between frontend and server) ─
+  # tls:
+  #   mode: "cert"
+  #   certSecretRef:
+  #     name: zabbix-web-frontend-tls
+  #   autoGenerate: false
+
+  # ── Service customisation ──────────────────────────────────────────────────
+  # Default Service: ClusterIP on port 80 → targetPort 8080.
+  service:
+    type: ClusterIP
+    # type: LoadBalancer   # Expose directly via cloud load balancer (no Ingress needed)
+    labels:
+      monitoring.example.com/component: "zabbix-web"

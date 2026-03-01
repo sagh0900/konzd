@@ -1,0 +1,117 @@
+---
+# CloudNativePG Cluster — Production HA (3-node streaming replication)
+#
+# 3 instances: 1 primary + 2 hot standbys.
+# Automatic failover via CNPG controller (< 30s typically).
+# PodDisruptionBudget enforced by CNPG: minAvailable=1 (safe to drain one node at a time).
+#
+# REQUIREMENTS:
+#   - At least 3 worker nodes to spread instances (podAntiAffinity below)
+#   - StorageClass with volumeBindingMode: WaitForFirstConsumer (dynamic provisioning)
+#   - Sufficient storage IOPS for WAL-heavy Zabbix write patterns
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: zabbix-pg
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-database
+    app.kubernetes.io/component: postgresql
+spec:
+  instances: 3
+
+  # PostgreSQL 16 — supported by Zabbix 7.x and 8.x.
+  imageName: "ghcr.io/cloudnative-pg/postgresql:16"
+
+  # Bootstrap: create the "zabbix" database with owner "zabbix" and password from Secret.
+  # CNPG creates the app user, creates the DB, and grants ownership.
+  # The bootstrap secret becomes the CNPG "app" credential; referenced by ZabbixDatabase.
+  bootstrap:
+    initdb:
+      database: zabbix
+      owner: zabbix
+      secret:
+        name: zabbix-db-creds   # keys: username, password
+      # Initial SQL for Zabbix schema prerequisites.
+      # Most schema creation is handled by the migration-sentinel Job; these are
+      # pre-requisites that must exist before the sentinel connects.
+      postInitSQL:
+        - "CREATE EXTENSION IF NOT EXISTS pg_trgm"
+        - "CREATE EXTENSION IF NOT EXISTS btree_gin"
+
+  # Storage: fast SSD-class storage for Zabbix's write-heavy history tables.
+  storage:
+    size: 100Gi
+    storageClass: "fast-ssd"   # replace with your StorageClass name
+
+  # WAL archiving: required for point-in-time recovery (PITR).
+  # Disable only if you use another backup strategy.
+  # backup:
+  #   barmanObjectStore:
+  #     destinationPath: "s3://my-backup-bucket/zabbix-pg"
+  #     s3Credentials:
+  #       accessKeyId:
+  #         name: cnpg-s3-creds
+  #         key: ACCESS_KEY_ID
+  #       secretAccessKey:
+  #         name: cnpg-s3-creds
+  #         key: SECRET_ACCESS_KEY
+  #   retentionPolicy: "30d"
+
+  # PostgreSQL tuning for Zabbix write-heavy workloads.
+  postgresql:
+    parameters:
+      # Connection settings
+      max_connections: "200"         # PgBouncer multiplexes; keep CNPG max lower
+      superuser_reserved_connections: "3"
+
+      # Memory (tune to ~25% of node RAM for shared_buffers)
+      shared_buffers: "2GB"
+      effective_cache_size: "6GB"    # estimate of OS file cache + shared_buffers
+      work_mem: "16MB"               # per-sort/per-hash operation
+      maintenance_work_mem: "256MB"  # VACUUM, CREATE INDEX, etc.
+
+      # WAL settings (balance durability vs. write performance)
+      wal_level: "replica"
+      max_wal_senders: "10"          # must be > instances-1 for streaming replication
+      wal_keep_size: "1GB"           # how much WAL to keep for slow replicas
+      checkpoint_completion_target: "0.9"
+      min_wal_size: "1GB"
+      max_wal_size: "4GB"
+
+      # Parallel query (Zabbix uses single-threaded queries; parallelism limited)
+      max_parallel_workers_per_gather: "2"
+      max_parallel_maintenance_workers: "2"
+
+      # Autovacuum (Zabbix history tables accumulate dead tuples fast)
+      autovacuum_vacuum_scale_factor: "0.02"     # vacuum more frequently (default: 0.2)
+      autovacuum_analyze_scale_factor: "0.01"    # analyze more frequently
+      autovacuum_vacuum_cost_delay: "2ms"        # aggressive vacuuming (default: 20ms)
+      autovacuum_max_workers: "5"                # more autovacuum workers
+
+      # Logging
+      log_min_duration_statement: "1000"  # log queries > 1s
+      log_connections: "off"
+      log_disconnections: "off"
+
+  # Pod anti-affinity: spread CNPG pods across nodes for fault isolation.
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              cnpg.io/cluster: zabbix-pg
+          topologyKey: kubernetes.io/hostname
+
+  # Node selector: schedule CNPG pods only on nodes with SSD storage.
+  # nodeSelector:
+  #   node.kubernetes.io/storage-type: ssd
+
+  # Resources for PostgreSQL pods.
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"

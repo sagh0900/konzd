@@ -1,0 +1,56 @@
+---
+# CloudNativePG PgBouncer Pooler — Production HA
+#
+# Transaction-mode pooler: Zabbix server connects through PgBouncer.
+# Benefits:
+#   - Multiplexes hundreds of Zabbix poller connections into a small number of server connections
+#   - Reduces CNPG max_connections pressure
+#   - Provides automatic failover: when CNPG primary switches, PgBouncer reconnects automatically
+#   - Enables connection queuing during brief CNPG primary promotion gaps
+#
+# CNPG creates:
+#   Service: zabbix-pg-pooler-rw  (ClusterIP, port 5432) → routes to PgBouncer pods
+#   Service: zabbix-pg-pooler-ro  (ClusterIP, port 5432) → routes to PgBouncer pods (RO)
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: zabbix-pg-pooler-rw
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-database
+    app.kubernetes.io/component: pgbouncer
+spec:
+  cluster:
+    name: zabbix-pg
+
+  # 2 PgBouncer replicas for HA at the pooler layer.
+  # Kubernetes Service load-balances across them.
+  instances: 2
+
+  # Transaction mode: required for Zabbix (server uses many short transactions).
+  # Session mode would work but wastes CNPG connections.
+  type: rw
+
+  pgbouncer:
+    poolMode: transaction
+
+    # PgBouncer tuning:
+    parameters:
+      # Maximum connections to the CNPG primary from PgBouncer.
+      # Should be < CNPG max_connections - superuser_reserved_connections.
+      max_client_conn: "500"
+      default_pool_size: "20"    # per-database connections to CNPG
+      reserve_pool_size: "5"     # extra connections for burst
+      reserve_pool_timeout: "3"
+      log_connections: "0"
+      log_disconnections: "0"
+      log_stats: "1"
+      stats_period: "60"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "64Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"

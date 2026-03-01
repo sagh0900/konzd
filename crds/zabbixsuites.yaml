@@ -1,0 +1,547 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: zabbixsuites.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixSuite
+    listKind: ZabbixSuiteList
+    plural: zabbixsuites
+    shortNames:
+    - zsuite
+    singular: zabbixsuite
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='SuiteReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .status.runningVersion
+      name: Running
+      type: string
+    - jsonPath: .status.enabledComponents
+      name: Components
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ZabbixSuite is the Schema for the zabbixsuites API.
+          It orchestrates the full Zabbix monitoring stack as a single, cohesive unit.
+
+          Required components (always created by the operator):
+            - ZabbixDatabase — wraps the CNPG cluster
+            - ZabbixServer   — the monitoring engine
+
+          Optional components (created only when their section is present in spec):
+            - Web, WebService, JMX, SNMPTrapper, Proxies[], Agents[]
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: "ZabbixSuiteSpec defines the desired state of ZabbixSuite.\n\nComponent
+              optionality summary:\n\n\tRequired (always created):\n\t  - CNPG       —
+              CloudNativePG PostgreSQL database backend\n\t  - Server     — ZabbixServer
+              (core monitoring engine)\n\n\tOptional — include only what your environment
+              requires:\n\t  - Web        — Nginx-based web frontend (recommended
+              for interactive use)\n\t  - WebService — Report-rendering micro-service
+              (needed for scheduled reports)\n\t  - JMX        — Java Gateway for
+              JMX/JVM monitoring\n\t  - SNMPTrapper — Receives SNMP trap events (only
+              for trap-based alerting)\n\t  - Proxies    — Distributed monitoring
+              agents (list; omit for central-only)\n\t  - Agents     — Zabbix Agent
+              DaemonSets/Deployments (list; omit if external)"
+            properties:
+              agents:
+                description: |-
+                  Agents is a list of ZabbixAgent CRs to deploy for host-level monitoring.
+                  Multiple agent sets allow different configurations per node group.
+                  Optional — omit when agents are managed externally or not required.
+                items:
+                  description: ZabbixSuiteAgentRef configures one ZabbixAgent entry
+                    within the suite.
+                  properties:
+                    existingRef:
+                      description: ExistingRef, when true, links to an externally
+                        managed ZabbixAgent CR.
+                      type: boolean
+                    name:
+                      description: Name of this agent entry. Used as the child CR
+                        name when creating inline.
+                      type: string
+                    spec:
+                      description: Spec is the inline ZabbixAgentSpec (raw JSON).
+                        Ignored when ExistingRef=true.
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - name
+                  type: object
+                type: array
+              cnpg:
+                description: |-
+                  CNPG defines the CloudNativePG PostgreSQL cluster that backs the Zabbix database.
+                  The operator watches this cluster for readiness and failover events.
+                properties:
+                  clusterRef:
+                    description: ClusterRef points to the existing CNPG Cluster CR.
+                    properties:
+                      apiVersion:
+                        description: API version of the referent.
+                        type: string
+                      fieldPath:
+                        description: |-
+                          If referring to a piece of an object instead of an entire object, this string
+                          should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                          For example, if the object reference is to a container within a pod, this would take on a value like:
+                          "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                          the event) or if no container name is specified "spec.containers[2]" (container with
+                          index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                          referencing a part of an object.
+                        type: string
+                      kind:
+                        description: |-
+                          Kind of the referent.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                        type: string
+                      name:
+                        description: |-
+                          Name of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                        type: string
+                      resourceVersion:
+                        description: |-
+                          Specific resourceVersion to which this reference is made, if any.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                        type: string
+                      uid:
+                        description: |-
+                          UID of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  directServiceName:
+                    description: |-
+                      DirectServiceName is the name of the CNPG primary-direct Service used during
+                      upgrade schema migrations (bypasses the pooler for DDL statements).
+                    type: string
+                  poolerRef:
+                    description: PoolerRef points to the existing CNPG Pooler CR (PgBouncer
+                      connection pooler).
+                    properties:
+                      apiVersion:
+                        description: API version of the referent.
+                        type: string
+                      fieldPath:
+                        description: |-
+                          If referring to a piece of an object instead of an entire object, this string
+                          should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                          For example, if the object reference is to a container within a pod, this would take on a value like:
+                          "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                          the event) or if no container name is specified "spec.containers[2]" (container with
+                          index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                          referencing a part of an object.
+                        type: string
+                      kind:
+                        description: |-
+                          Kind of the referent.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                        type: string
+                      name:
+                        description: |-
+                          Name of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                        type: string
+                      resourceVersion:
+                        description: |-
+                          Specific resourceVersion to which this reference is made, if any.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                        type: string
+                      uid:
+                        description: |-
+                          UID of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  trustWindow:
+                    default: 3m
+                    description: |-
+                      TrustWindow is the maximum age of a CNPG status observation before the
+                      operator considers it stale and blocks upgrades.
+                    type: string
+                required:
+                - clusterRef
+                - directServiceName
+                - poolerRef
+                type: object
+              jmx:
+                description: |-
+                  JMX customises the ZabbixJMX (Java Gateway) child CR.
+                  If omitted, JMX/JVM monitoring is unavailable.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              operatorImages:
+                description: |-
+                  OperatorImages overrides the default images for operator-injected sidecar/init
+                  containers (supervisor, lease-sidecar, migration-sentinel) suite-wide.
+                  Propagated to the ZabbixServer child CR when not overridden at the component level.
+                properties:
+                  leaseSidecarImage:
+                    description: |-
+                      LeaseSidecarImage is the image for the lease-sidecar container.
+                      It acquires the Kubernetes Lease and writes a heartbeat file.
+                      Defaults to ghcr.io/sagh0900/zabbix-lease-sidecar:2.0.
+                    type: string
+                  migrationSentinelImage:
+                    description: |-
+                      MigrationSentinelImage is the image used for the migration-check init container
+                      during schema upgrades.
+                      Defaults to ghcr.io/sagh0900/zabbix-migration-sentinel:2.0.
+                    type: string
+                  supervisorImage:
+                    description: |-
+                      SupervisorImage is the image used in the install-supervisor init container.
+                      The supervisor binary is copied from this image into a shared EmptyDir volume
+                      so the official Zabbix image is not modified.
+                      Defaults to ghcr.io/sagh0900/zabbix-supervisor:2.0.
+                    type: string
+                type: object
+              proxies:
+                description: |-
+                  Proxies is a list of ZabbixProxy CRs to create for distributed monitoring.
+                  Each entry is independently configured with its own image, mode, and storage.
+                  Optional — omit entirely for centralised (non-proxy) monitoring topologies.
+                items:
+                  description: ZabbixSuiteProxyRef configures one ZabbixProxy entry
+                    within the suite.
+                  properties:
+                    existingRef:
+                      description: |-
+                        ExistingRef, when true, links to an externally managed ZabbixProxy CR
+                        named Name instead of creating one. The operator will not reconcile its spec.
+                      type: boolean
+                    name:
+                      description: Name of this proxy entry. Used as the child CR
+                        name when creating inline.
+                      type: string
+                    spec:
+                      description: Spec is the inline ZabbixProxySpec (raw JSON).
+                        Ignored when ExistingRef=true.
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - name
+                  type: object
+                type: array
+              server:
+                description: |-
+                  Server customises the ZabbixServer child CR.
+                  If omitted, a ZabbixServer is created with sensible defaults derived from Version
+                  and the CNPG connection details. Always created; this field is for overrides only.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              snmpTrapper:
+                description: |-
+                  SNMPTrapper deploys a ZabbixSNMPTrapper child CR to receive SNMP trap events.
+                  Optional — only needed when Zabbix must act as an SNMP trap receiver.
+                  If omitted, no SNMP trapper is deployed.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              storageReclaimPolicy:
+                allOf:
+                - enum:
+                  - Retain
+                  - Delete
+                - enum:
+                  - Retain
+                  - Delete
+                default: Retain
+                description: |-
+                  StorageReclaimPolicy controls what happens to persistent data when the ZabbixSuite
+                  is deleted. Defaults to Retain to prevent accidental data loss.
+
+                    Retain  — removes ownerReferences from ZabbixDatabase, CNPG Cluster, and PVCs
+                              so they survive suite deletion. Safe default.
+                    Delete  — cascades deletion to all owned resources including PVCs.
+                              Use only when the data is expendable (dev/test).
+                type: string
+              upgradePolicy:
+                description: |-
+                  UpgradePolicy controls how and when version upgrades are executed.
+                  Propagated to the ZabbixServer child CR.
+                properties:
+                  allowMajorUpgrade:
+                    description: Must be explicitly true to allow a major-version
+                      crossing (e.g. 7.x → 8.0).
+                    type: boolean
+                  cnpgBackupRequired:
+                    description: A CNPG Backup CR must be successfully completed before
+                      schema upgrade begins.
+                    type: boolean
+                  manualApprovalGranted:
+                    description: Set to true by human operator to unblock a halted
+                      upgrade after manual remediation.
+                    type: boolean
+                  proxyCompatibilityCheck:
+                    description: Verify proxy-to-host-group assignments after upgrade.
+                    type: boolean
+                  requireManualApproval:
+                    description: Require a human to flip manualApprovalGranted before
+                      the state machine advances.
+                    type: boolean
+                  sentinelDryRun:
+                    description: Run migration-sentinel in --dry-run mode to enumerate
+                      patches without executing.
+                    type: boolean
+                type: object
+              version:
+                description: |-
+                  Version is the desired Zabbix version for the whole suite (e.g. "7.4.0").
+                  The operator propagates this to all child CRs and drives the upgrade state machine.
+                pattern: ^\d+\.\d+\.\d+$
+                type: string
+              web:
+                description: |-
+                  Web customises the ZabbixWeb (Nginx + PHP-FPM) child CR.
+                  If omitted, no web frontend is deployed (API-only setup).
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              webService:
+                description: |-
+                  WebService customises the ZabbixWebService child CR (scheduled-report renderer).
+                  If omitted, the web-service is not deployed and scheduled PDF reports are unavailable.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+            required:
+            - cnpg
+            - version
+            type: object
+          status:
+            description: ZabbixSuiteStatus defines the observed state of ZabbixSuite.
+            properties:
+              activeReplicas:
+                description: ActiveReplicas is the number of ready replicas in the
+                  server Deployment.
+                format: int32
+                type: integer
+              conditions:
+                description: |-
+                  Conditions summarises the suite's overall health.
+                    SuiteReady         — true when all required (+ present optional) children are ready
+                    DatabaseReady      — mirrors ZabbixDatabase.status.conditions[DatabaseReady]
+                    ServerReady        — mirrors ZabbixServer.status.conditions[ServerReady]
+                    UpgradeInProgress  — true while the upgrade state machine is active
+                    DegradedComponent  — set when an optional component is unhealthy
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              databaseReady:
+                description: DatabaseReady mirrors ZabbixDatabase.status.conditions[DatabaseReady].
+                type: boolean
+              enabledComponents:
+                description: |-
+                  EnabledComponents lists which optional components are currently deployed
+                  by this suite. Always includes "server" and "database".
+                items:
+                  type: string
+                type: array
+              leaderPod:
+                description: LeaderPod is the name of the pod currently holding the
+                  Lease.
+                type: string
+              leaderSince:
+                description: LeaderSince is the time the current leader acquired the
+                  Lease.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+              phase:
+                description: Phase mirrors ZabbixServer.status.upgradePhase.
+                type: string
+              runningVersion:
+                description: RunningVersion reflects the Zabbix version currently
+                  active on the server.
+                type: string
+              schemaReady:
+                description: SchemaReady mirrors ZabbixDatabase.status.conditions[SchemaReady].
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

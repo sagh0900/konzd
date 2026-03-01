@@ -1,0 +1,75 @@
+# ZabbixWebService — Standalone Manifest (Full Reference)
+#
+# PURPOSE
+#   A ZabbixWebService CR deploys the Zabbix web-service (report renderer) micro-service.
+#   It renders scheduled PDF/PNG reports requested by the Zabbix server's report manager.
+#
+# HOW IT WIRES IN
+#   When the ZabbixServer controller sees the annotation:
+#     zabbix.io/webservice-url: "http://<name>.<namespace>.svc.cluster.local:10053/report"
+#   (set by ZabbixSuite.patchServerInterconnects or manually), the server passes
+#   that URL to the zabbix_server process via ZBX_WEBSERVICEURL env var.
+#   Without that annotation (standalone mode), you must set the env var yourself
+#   via a ConfigMap or patch the ZabbixServer's pod template directly.
+#
+# STANDALONE WIRING (without ZabbixSuite)
+#   After creating this CR, annotate the ZabbixServer:
+#     kubectl annotate zabbixserver my-zabbix-server \
+#       zabbix.io/webservice-url="http://my-zabbix-webservice.zabbix-suite.svc.cluster.local:10053/report"
+#
+# DEPENDENCIES
+#   - ZabbixServer CR must exist (spec.serverRef.name); the operator injects the URL
+#     into the server's annotation automatically when wired via ZabbixSuite.
+#   - No database access is needed; this service only receives render requests from
+#     the Zabbix server and returns rendered report binary data.
+#
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixWebService
+metadata:
+  name: my-zabbix-webservice
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-webservice
+    app.kubernetes.io/instance: my-zabbix
+
+spec:
+  # ── Container image ────────────────────────────────────────────────────────
+  image: "zabbix/zabbix-web-service:ubuntu-7.4-latest"
+
+  # ── Replica count ──────────────────────────────────────────────────────────
+  # The report renderer is stateless; scale based on concurrent report load.
+  replicas: 2
+
+  # ── ZabbixServer reference ─────────────────────────────────────────────────
+  # Optional when standalone; required when managed by ZabbixSuite (auto-set).
+  serverRef:
+    name: my-zabbix-server
+
+  # ── Listen port ────────────────────────────────────────────────────────────
+  # Default: 10053. The Zabbix server sends report requests to this port.
+  port: 10053
+
+  # ── TLS ───────────────────────────────────────────────────────────────────
+  # Encrypt traffic between Zabbix server and web-service.
+  # tls:
+  #   mode: "cert"
+  #   certSecretRef:
+  #     name: zabbix-webservice-tls
+  #   autoGenerate: false
+
+  # ── Compute resources ──────────────────────────────────────────────────────
+  # Report rendering (headless Chrome/Chromium) can be CPU/memory intensive.
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+  # ── Service customisation ──────────────────────────────────────────────────
+  service:
+    type: ClusterIP   # This service is internal; do not expose externally.
+    labels:
+      monitoring.example.com/component: "zabbix-webservice"

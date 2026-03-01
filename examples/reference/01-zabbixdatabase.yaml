@@ -1,0 +1,118 @@
+# ZabbixDatabase — Standalone Manifest (Full Reference)
+#
+# PURPOSE
+#   A ZabbixDatabase CR wraps an existing CloudNativePG (CNPG) cluster and exposes
+#   its readiness, staleness, and flap state as structured Conditions.
+#   The ZabbixServer controller reads these conditions to gate upgrade state-machine
+#   transitions and to know the correct DB hostname/port for connection.
+#
+# LIFECYCLE
+#   - Create BEFORE ZabbixServer (ZabbixServer requires a healthy ZabbixDatabase).
+#   - The operator does NOT create or manage the CNPG Cluster or Pooler;
+#     those must be pre-provisioned (see deploy/04-cnpg-ha-cluster.yaml and
+#     deploy/05-cnpg-pooler.yaml).
+#   - Safe to delete and recreate without touching CNPG resources.
+#
+# STATUS CONDITIONS (set by the operator, read-only for users)
+#   DatabaseReady    — aggregate: CNPG cluster is ready and reachable via pooler
+#   ClusterReady     — CNPG Cluster CR exists and readyInstances >= 1
+#   PoolerReady      — CNPG Pooler exists and has running instances
+#   DatabaseCreated  — initDB inferred complete (clusterReadyInstances >= 1)
+#   CredentialsReady — CNPG app-secret (or superuser-secret) exists with a password key
+#   SchemaReady      — (set by ZabbixServer after first schema migration completes)
+#   StatusFresh      — CNPG status was observed within trustWindow
+#   DatabaseFlapping — primary changed more than flapThresholdCount in flapThresholdWindow
+#   QuorumLost       — fewer than majority of CNPG instances are ready
+#
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixDatabase
+metadata:
+  name: my-zabbix-db       # Referenced by ZabbixServer.spec.databaseRef.name
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-database
+    app.kubernetes.io/instance: my-zabbix
+
+spec:
+  # ── CNPG Cluster reference ─────────────────────────────────────────────────
+  # Points to the CNPG Cluster CR that holds the PostgreSQL primary.
+  # The operator reads: status.readyInstances, status.currentPrimary, status.instances.
+  clusterRef:
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Cluster
+    name: zabbix-pg           # Name of the CNPG Cluster CR
+    namespace: zabbix-suite   # Must be in the same namespace as ZabbixDatabase
+
+  # ── CNPG Pooler reference ──────────────────────────────────────────────────
+  # Points to the PgBouncer Pooler CR (transaction-mode, RW pool).
+  # The Zabbix server connects here for all normal queries.
+  poolerRef:
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Pooler
+    name: zabbix-pg-pooler-rw
+    namespace: zabbix-suite
+
+  # ── Direct primary service ─────────────────────────────────────────────────
+  # CNPG auto-creates a service "<cluster-name>-rw" that always points to the
+  # current primary. The migration-sentinel uses this to run DDL statements
+  # (ALTER TABLE, CREATE INDEX, etc.) in non-pooled connections — PgBouncer
+  # transaction mode does not support DDL across multiple pooled connections.
+  directServiceRef: zabbix-pg-rw
+
+  # ── Trust window ───────────────────────────────────────────────────────────
+  # Maximum age of a CNPG status observation before the operator marks
+  # StatusFresh=False (informational — does NOT block DatabaseReady).
+  # Stable, low-churn CNPG clusters may not update status conditions for hours.
+  # StatusFresh=False is a warning signal, not a hard gate; SchemaReady (live DB
+  # ping) provides the real health signal for the DatabaseReady aggregate.
+  # Default: 1h
+  trustWindow: "1h"
+
+  # ── Flap detection ─────────────────────────────────────────────────────────
+  # The operator tracks CNPG primary changes within a sliding window.
+  # If the primary changes more than flapThresholdCount times within
+  # flapThresholdWindow, DatabaseFlapping=True is set, which will block upgrades.
+  #
+  # flapThresholdCount: how many primary changes within the window trigger a flap alert.
+  # Default: 2
+  flapThresholdCount: 2
+
+  # flapThresholdWindow: sliding window duration for counting primary changes.
+  # Default: 60s
+  flapThresholdWindow: "60s"
+
+  # ── Credentials override (v2.5+) ───────────────────────────────────────────
+  # By default the operator auto-discovers credentials from the CNPG app secret
+  # ("<cluster>-app") falling back to "<cluster>-superuser".
+  # Set credentialsRef to use a custom Secret instead.
+  #
+  # The resolved secret name, username key, password key, and database name
+  # are written to status.credentialSecretName / credentialUsernameKey /
+  # credentialPasswordKey / credentialDatabase and consumed by ZabbixServer
+  # and ZabbixWeb controllers (no duplicate resolution).
+  #
+  # credentialsRef:
+  #   secretName: zabbix-db-creds          # Secret in same namespace
+  #   usernameKey: username                 # default: "username"
+  #   passwordKey: password                 # default: "password"
+  #   database: zabbix                      # default: "zabbix"
+
+  # ── Database TLS (v2.5+) ───────────────────────────────────────────────────
+  # Controls TLS for connections from Zabbix server and web to CNPG/PgBouncer.
+  # Applies to both ZabbixServer (ZBX_DB_TLS_*) and ZabbixWeb (ZBX_DB_ENCRYPTION / ZBX_DB_CA_FILE etc.).
+  # TLS config is on ZabbixDatabase (not on server/web) because both share the same endpoint.
+  #
+  # Modes:
+  #   disable     — plaintext (default)
+  #   require     — TLS, no certificate verification
+  #   verify-ca   — TLS + CA certificate verification
+  #   verify-full — TLS + CA + hostname verification (recommended for production)
+  #
+  # dbTLS:
+  #   mode: verify-full
+  #   caSecretRef:
+  #     name: cnpg-ca-cert                  # Secret containing CA cert
+  #     key: ca.crt                         # default: "ca.crt"
+  #   clientCertSecretRef:
+  #     name: zabbix-db-client-cert         # Secret for mTLS; must have tls.crt + tls.key

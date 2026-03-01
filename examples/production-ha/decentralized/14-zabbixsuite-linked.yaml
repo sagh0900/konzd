@@ -1,0 +1,167 @@
+---
+# ZabbixSuite — Production HA / Decentralized (Link Mode)
+#
+# ════════════════════════════════════════════════════════════════════════════
+# DECENTRALIZED / LINK MODE OVERVIEW
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Each component CR (ZabbixDatabase, ZabbixServer, ZabbixWeb, etc.) is:
+#   - Owned and managed by a specific team
+#   - Applied independently (different pipelines, different RBAC)
+#   - Referenced here by name via existingRef
+#
+# The ZabbixSuite CR in link mode:
+#   - Is owned by the Platform Team (or SRE team)
+#   - Reads status from each referenced CR to compute aggregate SuiteReady
+#   - Injects serverRef/databaseRef pointers into linked CRs (only those fields)
+#   - Does NOT modify any other spec fields on linked CRs
+#   - Exposes suite-level status: leaderPod, leaderSince, activeReplicas,
+#     databaseReady, schemaReady, phase
+#
+# PREREQUISITE APPLY ORDER:
+#   00-namespace.yaml        (1. Namespace, Quota, LimitRange)
+#   01-secrets.yaml          (2. DB creds, PSK, TLS certs, pull secrets)
+#   02-configmaps.yaml       (3. Tuning ConfigMap)
+#   03-rbac.yaml             (4. ServiceAccount with imagePullSecrets, NetworkPolicy)
+#   04-cnpg-cluster.yaml     (5. CNPG 3-node cluster)
+#   05-cnpg-pooler.yaml      (6. PgBouncer pooler)
+#   06-zabbixdatabase.yaml   (7. DB Team: ZabbixDatabase CR)
+#   07-zabbixserver.yaml     (8. App Team A: ZabbixServer CR — 2 replicas, HA)
+#   08-zabbixweb.yaml        (9. Frontend Team: ZabbixWeb CR)
+#   09-zabbixwebservice.yaml (10. Frontend Team: ZabbixWebService CR)
+#   10-zabbixjmx.yaml        (11. Platform Team: ZabbixJMX CR)
+#   11-zabbixsnmptrapper.yaml (12. Network Team: ZabbixSNMPTrapper CR)
+#   12-zabbixproxy.yaml      (13. Remote Site Team: ZabbixProxy CR)
+#   13-zabbixagent.yaml      (14. Platform Team: ZabbixAgent CRs)
+#   THIS FILE (15. SRE Team: ZabbixSuite CR — link mode aggregator)
+#
+# WAIT FOR CNPG BEFORE APPLYING:
+#   kubectl wait cluster zabbix-pg -n zabbix-suite --for=condition=Ready --timeout=300s
+#   kubectl wait pooler zabbix-pg-pooler-rw -n zabbix-suite --for=condition=Ready --timeout=120s
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSuite
+metadata:
+  name: my-zabbix
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-suite
+    app.kubernetes.io/instance: my-zabbix
+    environment: production
+    team: sre-team
+  annotations:
+    team.example.com/owner: "sre-team@example.com"
+    zabbix-operator.io/managed-by-version: "2.9"
+
+spec:
+  # ── Database (link mode) ──────────────────────────────────────────────────
+  # existingRef: operator reads ZabbixDatabase.status only; no spec changes.
+  # The DB team controls all ZabbixDatabase spec fields via 06-zabbixdatabase.yaml.
+  database:
+    existingRef:
+      name: my-zabbix-db
+      namespace: zabbix-suite
+
+  # ── Server (link mode) ────────────────────────────────────────────────────
+  # The operator injects spec.databaseRef = {name: my-zabbix-db} on this CR.
+  # All other fields (replicas, leaseDuration, tls, extraEnv, etc.) are
+  # owned by the App Team via 07-zabbixserver.yaml.
+  server:
+    existingRef:
+      name: my-zabbix-server
+    enabled: true   # include in SuiteReady aggregate
+
+  # ── Web (link mode) ───────────────────────────────────────────────────────
+  # The operator injects spec.serverRef = {name: my-zabbix-server} on this CR.
+  web:
+    existingRef:
+      name: my-zabbix-web
+    enabled: true
+
+  # ── WebService (link mode) ────────────────────────────────────────────────
+  # The operator injects the webservice URL annotation on ZabbixServer.
+  webService:
+    existingRef:
+      name: my-zabbix-webservice
+    enabled: true
+
+  # ── JMX (link mode) ───────────────────────────────────────────────────────
+  # The operator injects the JMX gateway hostname annotation on ZabbixServer.
+  jmx:
+    existingRef:
+      name: my-zabbix-jmx
+    enabled: true
+
+  # ── SNMP Trapper (link mode) ──────────────────────────────────────────────
+  snmpTrapper:
+    existingRef:
+      name: my-zabbix-snmptrapper
+    enabled: true
+
+  # ── Proxies (link mode, existingRef: true) ────────────────────────────────
+  # Multiple proxies can be referenced. The operator reads each proxy's status
+  # for the suite-level health aggregate. It does NOT modify proxy spec fields.
+  # existingRef: true = operator never touches spec; Remote Site Team owns it.
+  proxies:
+    - existingRef:
+        name: my-zabbix-proxy-eu
+      enabled: true
+
+  # ── Agents (link mode, existingRef: true) ─────────────────────────────────
+  # Both agent CRs are listed. Operator reads status; Platform Team owns specs.
+  agents:
+    - existingRef:
+        name: my-zabbix-agent       # DaemonSet, both mode, PSK
+      enabled: true
+    - existingRef:
+        name: my-zabbix-agent-app   # Deployment, active mode, app-specific
+      enabled: true
+
+# ════════════════════════════════════════════════════════════════════════════
+# STATUS READ-OUT (populated by operator after reconcile)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# kubectl get zabbixsuite my-zabbix -n zabbix-suite -o yaml
+#
+# status:
+#   conditions:
+#     - type: SuiteReady
+#       status: "True"
+#       reason: AllComponentsReady
+#     - type: DatabaseReady
+#       status: "True"
+#     - type: ServerReady
+#       status: "True"
+#     - type: WebReady
+#       status: "True"
+#   phase: Healthy
+#   leaderPod: my-zabbix-server-<hash>
+#   leaderSince: "2026-02-28T10:15:30Z"
+#   activeReplicas: 2
+#   databaseReady: true
+#   schemaReady: true
+#
+# ════════════════════════════════════════════════════════════════════════════
+# OPERATIONAL COMMANDS
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Suite health:
+#   kubectl get zabbixsuite my-zabbix -n zabbix-suite
+#
+# Leader and failover state:
+#   kubectl get lease zabbix-server-leader-my-zabbix-server -n zabbix-suite \
+#     -o jsonpath='holder={.spec.holderIdentity} transitions={.spec.leaseTransitions}'
+#
+# Active endpoint (should show leader pod IP):
+#   kubectl get endpointslices my-zabbix-server-active -n zabbix-suite
+#
+# Prometheus metrics (port-forward to operator pod):
+#   kubectl port-forward -n zabbix-operator deploy/zabbix-operator 8080:8080
+#   curl http://localhost:8080/metrics | grep zabbix_
+#
+# Available metrics:
+#   zabbix_leader_transitions_total{server,namespace}    — cumulative failovers
+#   zabbix_endpoint_updates_total{server,namespace}      — EPS write count
+#   zabbix_upgrade_phase{server,namespace,phase}         — current upgrade state
+#   zabbix_database_ready{database,namespace}            — DB readiness gauge (0/1)
+#   zabbix_lease_renew_failures_total{server,namespace}  — lease renewal failures

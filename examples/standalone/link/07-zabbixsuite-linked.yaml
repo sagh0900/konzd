@@ -1,0 +1,69 @@
+---
+# ZabbixSuite — Link Mode (Decentralized / Standalone)
+#
+# LINK MODE: References pre-created component CRs by name instead of embedding
+# component specs inline. The operator:
+#   - Updates serverRef/databaseRef on linked CRs (injects routing pointers)
+#   - Reads component CR statuses to compute its own SuiteReady condition
+#   - Does NOT modify any other spec fields on linked CRs
+#
+# PREREQUISITES (apply in order before this file):
+#   04-zabbixdatabase.yaml   → my-zabbix-db
+#   05-zabbixserver.yaml     → my-zabbix-server
+#   06-zabbixweb.yaml        → my-zabbix-web
+#
+# LINK MODE vs INLINE:
+#   Link mode: each CR owned by separate team; ZabbixSuite is a "view" aggregator
+#   Inline mode: ZabbixSuite owns all component lifecycles
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSuite
+metadata:
+  name: my-zabbix
+  namespace: zabbix-dev
+  labels:
+    app.kubernetes.io/name: zabbix-suite
+    app.kubernetes.io/instance: my-zabbix
+    environment: development
+
+spec:
+  # ── Database reference (link mode) ────────────────────────────────────────
+  # existingRef: true — operator reads the named CR's status only; no spec changes.
+  # The ZabbixDatabase CR must already exist and be healthy.
+  database:
+    existingRef:
+      name: my-zabbix-db
+      namespace: zabbix-dev   # optional; defaults to ZabbixSuite namespace
+
+  # ── Server reference (link mode) ──────────────────────────────────────────
+  server:
+    existingRef:
+      name: my-zabbix-server
+    # enabled: true   # default; set false to exclude from SuiteReady aggregate
+
+  # ── Web reference (link mode) ─────────────────────────────────────────────
+  web:
+    existingRef:
+      name: my-zabbix-web
+    enabled: true
+
+  # ── JMX (disabled in this example) ────────────────────────────────────────
+  jmx:
+    enabled: false
+
+  # ── SNMP Trapper (disabled in this example) ───────────────────────────────
+  snmpTrapper:
+    enabled: false
+
+  # ── Proxy and Agent references (link mode, existingRef: true) ─────────────
+  # In link mode, proxies and agents can also be referenced.
+  # The operator reads their status but does NOT modify their specs.
+  #
+  # proxies:
+  #   - existingRef:
+  #       name: my-zabbix-proxy-eu
+  #     enabled: true
+  #
+  # agents:
+  #   - existingRef:
+  #       name: my-zabbix-agent
+  #     enabled: true

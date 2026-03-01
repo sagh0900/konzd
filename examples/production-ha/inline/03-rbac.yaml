@@ -1,0 +1,122 @@
+---
+# ════════════════════════════════════════════════════════════════════════════
+# RBAC for Production HA deployment
+#
+# The zabbix-operator creates several ServiceAccounts automatically.
+# Pre-creating them here with imagePullSecrets avoids a scheduling race
+# where pods try to pull from ghcr.io before the SA patch is applied.
+# ════════════════════════════════════════════════════════════════════════════
+
+---
+# ZabbixServer ServiceAccount — pre-created with imagePullSecrets.
+# The operator merges its own RBAC rules into this SA; do not modify the name.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zabbix-server
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/managed-by: zabbix-operator
+    app.kubernetes.io/component: server
+imagePullSecrets:
+  # Pull secret for operator sidecar images (supervisor, lease-sidecar, migration-sentinel)
+  # from ghcr.io/sagh0900.
+  # Zabbix workload images (docker.io/zabbix/*) are public; no pull secret needed.
+  - name: ghcr-pull-secret
+
+---
+# Namespace-scoped Role for Zabbix server pods to read their own pod metadata.
+# The operator creates its own ClusterRole for the operator pod; this Role is
+# for the zabbix-server pods themselves (e.g. reading ConfigMaps for extraEnv).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zabbix-server-pod-reader
+  namespace: zabbix-suite
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    # Minimal: only the secrets the server pods need to read at runtime.
+    # The operator injects secret values as env vars; pods don't typically need
+    # direct Secret read access. Include only if using sidecar secret reading.
+    verbs: []
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zabbix-server-pod-reader
+  namespace: zabbix-suite
+subjects:
+  - kind: ServiceAccount
+    name: zabbix-server
+    namespace: zabbix-suite
+roleRef:
+  kind: Role
+  apiRef: rbac.authorization.k8s.io
+  name: zabbix-server-pod-reader
+
+---
+# NetworkPolicy: restrict ingress to ZabbixServer pods.
+# Allow: agents (10050/TCP passive), server-to-server HA (10051/TCP), metrics (8080).
+# Deny: all other sources.
+#
+# Comment out if your CNI does not support NetworkPolicy or if you prefer flat networking.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: zabbix-server-netpol
+  namespace: zabbix-suite
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zabbix-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow Zabbix agents to reach the server on 10051 (active checks / passive server)
+    - ports:
+        - port: 10051
+          protocol: TCP
+    # Allow ZabbixWeb to reach the server API on 10051
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: zabbix-web
+      ports:
+        - port: 10051
+          protocol: TCP
+    # Allow Prometheus scraping of metrics
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    # Allow egress to PostgreSQL (via PgBouncer pooler on 5432)
+    - ports:
+        - port: 5432
+          protocol: TCP
+    # Allow egress to DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow egress to Kubernetes API (for Lease operations)
+    - ports:
+        - port: 6443
+          protocol: TCP
+    # Allow egress to agents on 10050 (passive agent checks from server)
+    - ports:
+        - port: 10050
+          protocol: TCP

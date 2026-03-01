@@ -1,0 +1,22 @@
+---
+# CloudNativePG Cluster — minimal single-instance for development.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: zabbix-pg
+  namespace: zabbix-dev
+spec:
+  instances: 1
+  imageName: "ghcr.io/cloudnative-pg/postgresql:16"
+  bootstrap:
+    initdb:
+      database: zabbix
+      owner: zabbix
+      secret:
+        name: zabbix-db-creds
+  storage:
+    size: 10Gi
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: "128MB"

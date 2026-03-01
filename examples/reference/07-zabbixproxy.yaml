@@ -1,0 +1,116 @@
+# ZabbixProxy — Standalone Manifest (Full Reference)
+#
+# PURPOSE
+#   A ZabbixProxy CR deploys a Zabbix Proxy for distributed monitoring.
+#   Proxies collect data from remote network segments and forward it to the
+#   Zabbix server, reducing the load on the central server and enabling monitoring
+#   across firewalled or high-latency network boundaries.
+#
+# PROXY MODES
+#   active  (default) — proxy initiates connections TO the Zabbix server.
+#     Advantages: only outbound TCP/10051 needed from proxy to server.
+#     Use for proxies behind NAT or strict firewalls.
+#     Deployment: Deployment (stateless, no PVC needed for active mode without local cache).
+#
+#   passive — Zabbix server connects TO the proxy on port 10051.
+#     Advantages: server controls polling schedule precisely.
+#     Requires: server can reach the proxy's pod IP or Service IP on port 10051.
+#     Deployment: Deployment; a Service (ClusterIP or LoadBalancer) exposes the proxy port.
+#
+# STORAGE (for local database cache in active proxies)
+#   Active proxies buffer collected data in a local SQLite/MySQL database.
+#   Set storageClass + storageSize to provision a PVC for persistence.
+#   Without storage, data is buffered in memory and lost on pod restart.
+#
+# DEPENDENCIES
+#   - ZabbixServer CR must exist and be reachable.
+#   - For passive mode: the server must be able to connect to the proxy's Service IP.
+#   - Register the proxy in Zabbix Administration → Proxies after deployment.
+#
+---
+# ── Active proxy example ───────────────────────────────────────────────────
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixProxy
+metadata:
+  name: my-zabbix-proxy-eu        # Each proxy needs a unique name (also its Zabbix hostname)
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-proxy
+    app.kubernetes.io/instance: my-zabbix
+    zabbix.io/proxy-region: eu-west
+
+spec:
+  # ── Container image ────────────────────────────────────────────────────────
+  image: "zabbix/zabbix-proxy-sqlite3:ubuntu-7.4-latest"
+  # For MySQL-backed proxy: "zabbix/zabbix-proxy-mysql:ubuntu-7.4-latest"
+
+  # ── Proxy mode ─────────────────────────────────────────────────────────────
+  mode: active    # active | passive
+
+  # ── Replica count ──────────────────────────────────────────────────────────
+  # Active proxies: 1 recommended (multiple proxies with the same name compete;
+  # only one is registered in Zabbix server at a time).
+  replicas: 1
+
+  # ── ZabbixServer reference ─────────────────────────────────────────────────
+  # Active proxy: connects to <serverRef>-active Service on port 10051.
+  # Passive proxy: server polls this proxy; Service must be reachable from server.
+  serverRef:
+    name: my-zabbix-server
+
+  # ── Persistent storage (active proxy local database cache) ────────────────
+  # Omit for in-memory only (data lost on pod restart).
+  # Required for production active proxies to survive pod restarts.
+  storageClass: nfs-csi    # StorageClass name in your cluster
+  storageSize: "5Gi"       # Buffer size — scale with number of monitored hosts
+
+  # ── TLS configuration ──────────────────────────────────────────────────────
+  tls:
+    mode: "none"    # none | psk | cert
+    # PSK example:
+    # mode: "psk"
+    # pskIdentity: "proxy-eu-psk"
+    # pskSecretRef:
+    #   name: proxy-eu-psk-secret
+    #   key: psk
+
+  # ── Compute resources ──────────────────────────────────────────────────────
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # ── Service customisation (passive proxies) ────────────────────────────────
+  # For active proxies, a Service is not required for the proxy port.
+  # For passive proxies, the server connects to this Service.
+  # service:
+  #   type: ClusterIP   # or LoadBalancer if the proxy is in a different cluster
+
+---
+# ── Passive proxy example (for reference — uncomment and adjust if needed) ──
+#
+# apiVersion: zabbix.io/v1alpha1
+# kind: ZabbixProxy
+# metadata:
+#   name: my-zabbix-proxy-passive
+#   namespace: zabbix-suite
+# spec:
+#   image: "zabbix/zabbix-proxy-sqlite3:ubuntu-7.4-latest"
+#   mode: passive
+#   replicas: 1
+#   serverRef:
+#     name: my-zabbix-server
+#   storageClass: nfs-csi
+#   storageSize: "2Gi"
+#   service:
+#     type: ClusterIP   # Server connects to this Service on port 10051
+#   resources:
+#     requests:
+#       cpu: "100m"
+#       memory: "128Mi"
+#     limits:
+#       cpu: "500m"
+#       memory: "512Mi"

@@ -1,0 +1,259 @@
+# ZabbixServer — Standalone Manifest (Full Reference)
+#
+# PURPOSE
+#   A ZabbixServer CR deploys the Zabbix monitoring engine as a Kubernetes Deployment
+#   with operator-managed HA via Kubernetes Lease-based leader election.
+#
+# HA ARCHITECTURE (replicas > 1)
+#   Each pod runs three containers:
+#     1. init: install-supervisor  — copies the supervisor binary into a shared EmptyDir
+#     2. lease-sidecar             — acquires the Kubernetes Lease; writes a heartbeat
+#                                    file when holding the lease, stops writing on loss
+#     3. zabbix-server (main)      — wrapped by supervisor; supervisor monitors heartbeat
+#                                    staleness to fence a deposed leader's process
+#
+#   Routing: a selector-less Service "zabbix-<name>-active" exists.
+#   The operator maintains a single EndpointSlice pointing to the current leader's IP.
+#   kube-proxy routes port 10051 traffic to the leader exclusively.
+#
+# LEASE TIMING RECOMMENDATIONS
+#   leaseDuration : how long a lease is valid without renewal (controls max failover time)
+#   renewDeadline : how long to keep trying to renew before fencing (< leaseDuration)
+#   retryPeriod   : how often standby pods attempt to acquire an expired lease
+#   deltaNet      : P99 network round-trip estimate (used for heartbeat threshold calc)
+#   deltaDisk     : P99 disk flush latency estimate (used for heartbeat threshold calc)
+#
+#   The admission webhook auto-computes heartbeatThreshold = (leaseDuration - (deltaNet + deltaDisk)) / 2
+#   unless you set it explicitly.
+#
+# UPGRADE STATE MACHINE
+#   Idle → PreFlight → SingleNode → SchemaUpgrade → PostUpgrade → Healthy
+#   The operator drives this; ZabbixDatabase must have DatabaseReady=True.
+#   Upgrade is triggered when spec.version changes or when the image digest changes.
+#
+# DEPENDENCIES
+#   Requires a healthy ZabbixDatabase CR (spec.databaseRef.name).
+#
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixServer
+metadata:
+  name: my-zabbix-server    # Referenced by ZabbixWeb/JMX/WebService/Proxy/Agent.spec.serverRef.name
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-server
+    app.kubernetes.io/instance: my-zabbix
+
+spec:
+  # ── Container image ────────────────────────────────────────────────────────
+  # Use the official unmodified Zabbix server image.
+  # The operator injects the supervisor binary via an init container at runtime.
+  # Tag strategy: prefer digest pinning for production; floating tags (ubuntu-7.4-latest)
+  # are fine if you rely on the operator's digest-based upgrade detection.
+  image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+
+  # ── Replica count ──────────────────────────────────────────────────────────
+  # 1 = single node (no HA; simpler, no lease/heartbeat overhead)
+  # 2 = recommended HA (one active leader, one hot standby)
+  # 3 = max HA (one leader, two standbys — more failover candidates)
+  # Min: 1  Max: 3
+  replicas: 2
+
+  # ── Database reference ─────────────────────────────────────────────────────
+  # Must match the ZabbixDatabase CR name in the same namespace.
+  # The operator reads the database's conditions and connection details from here.
+  databaseRef:
+    name: my-zabbix-db
+
+  # ── Target Zabbix version ──────────────────────────────────────────────────
+  # When set, the upgrade state machine is activated if the running version differs.
+  # Pattern: MAJOR.MINOR.PATCH (e.g. "7.4.0", "7.4.1", "8.0.0")
+  # Leave empty to skip version-gated upgrade checks (image digest still tracked).
+  version: "7.4.0"
+
+  # ── HA Lease timing ────────────────────────────────────────────────────────
+  # v2.0 defaults (balanced for Kubernetes LAN latency):
+  leaseDuration: "20s"   # Lease validity window; max failover time ≈ leaseDuration
+  renewDeadline: "15s"   # Fence if renewal not recovered within this window
+  retryPeriod:   "3s"    # Standby acquisition attempt frequency
+
+  # Network and disk latency estimates (used to compute heartbeat threshold)
+  # heartbeatThreshold is auto-computed by the admission webhook as:
+  #   (leaseDuration - (deltaNet + deltaDisk)) / 2 = (20s - 3s) / 2 = 8.5s
+  # Override heartbeatThreshold only if the formula doesn't suit your environment.
+  deltaNet:  "2s"    # P99 network RTT to API server
+  deltaDisk: "1s"    # P99 disk flush latency on nodes
+
+  # Override the computed heartbeatThreshold (optional — leave unset for auto-compute)
+  # If set, the webhook validates: value <= (leaseDuration - deltaNet - deltaDisk) / 2
+  # heartbeatThreshold: "8s"
+
+  # ── Compute resources ──────────────────────────────────────────────────────
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+  # ── Resources for schema upgrade Jobs ──────────────────────────────────────
+  # The migration-sentinel Job runs heavy SQL migrations; give it adequate resources.
+  upgradeResources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # ── Upgrade policy ─────────────────────────────────────────────────────────
+  upgradePolicy:
+    # Allow crossing major version boundaries (e.g. 7.x → 8.0).
+    # Set false to block major upgrades until explicitly enabled.
+    allowMajorUpgrade: false
+
+    # Pause the state machine at PreFlight, waiting for a human to set
+    # manualApprovalGranted: true before the upgrade proceeds.
+    requireManualApproval: false
+
+    # When true, manualApprovalGranted unblocks a halted upgrade.
+    # Toggle to true after reviewing the pre-flight report.
+    manualApprovalGranted: false
+
+    # Run the migration-sentinel in dry-run mode (generates SQL but does not apply).
+    # Useful for auditing schema changes before committing.
+    sentinelDryRun: false
+
+    # Verify proxy-to-host-group assignments are intact after upgrade.
+    proxyCompatibilityCheck: false
+
+    # Require a CNPG Backup CR to complete successfully before schema upgrade begins.
+    # Recommended for production — ensures a restore point exists before DDL runs.
+    cnpgBackupRequired: false
+
+  # ── TLS configuration ──────────────────────────────────────────────────────
+  # Controls TLS for server-to-proxy and server-to-agent communications.
+  # Modes: none | psk | cert
+  tls:
+    mode: "none"   # no TLS (default; fine for in-cluster communications)
+
+    # --- PSK mode example (uncomment to use) ---
+    # mode: "psk"
+    # pskIdentity: "zabbix-server-psk"
+    # pskSecretRef:
+    #   name: zabbix-server-psk-secret   # Secret with key "psk"
+    #   key: psk
+
+    # --- Certificate mode example (uncomment to use) ---
+    # mode: "cert"
+    # certSecretRef:
+    #   name: zabbix-server-tls-secret   # Secret with keys: tls.crt, tls.key, ca.crt
+    # autoGenerate: false                # Set true to let operator auto-generate self-signed certs
+
+  # ── Service customisation ──────────────────────────────────────────────────
+  # The operator creates two Services:
+  #   "<name>-active"  — selector-less; routes to leader only (via EndpointSlice)
+  #   "<name>-passive" — selects all pods (for standby read-only queries)
+  # This field customises the active Service.
+  service:
+    type: ClusterIP   # ClusterIP | NodePort | LoadBalancer
+    labels:
+      monitoring.example.com/role: "zabbix-active"
+    # ports: []   # Override only if you need non-standard port numbers
+
+  # ── Operator sidecar image overrides ──────────────────────────────────────
+  # Override the default sidecar images injected by the operator.
+  # Leave unset to use operator defaults (recommended).
+  operatorImages:
+    supervisorImage:         "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+    leaseSidecarImage:       "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+    migrationSentinelImage:  "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+
+  # ── Extra environment variables (v2.6+) ────────────────────────────────────
+  # Inject arbitrary additional env vars into the zabbix-server container.
+  # This replaces the Helm values-file tuning you previously used for pollers,
+  # cache sizes, timers, and other Zabbix server parameters.
+  #
+  # Merge rules:
+  #   - Protected keys (ZBX_DB_*, ZBX_HANODENAME, ZBX_NODEADDRESS, ZBX_DB_TLS_*)
+  #     are always operator-owned. Any extraEnv entry with a protected key name is
+  #     silently ignored; the operator value is retained.
+  #   - All other keys are accepted. A key that already exists in the operator's
+  #     default set can be overridden here (e.g. ZBX_STARTPOLLERS).
+  #   - New keys not in the operator defaults are appended to the container env.
+  #
+  # Full corev1.EnvVar syntax is supported: plain value, secretKeyRef,
+  # configMapKeyRef, fieldRef, and resourceFieldRef.
+  #
+  # For the full list of tunable env vars see the official Docker image docs:
+  #   https://hub.docker.com/r/zabbix/zabbix-server-pgsql  (Environment Variables section)
+  #
+  extraEnv:
+    # ── Poller / process counts ────────────────────────────────────────────────
+    - name: ZBX_STARTPOLLERS           # Generic SNMP/agent pollers  (default: 5)
+      value: "10"
+    - name: ZBX_STARTPOLLERSUNREACHABLE  # Pollers for unreachable hosts (default: 1)
+      value: "2"
+    - name: ZBX_STARTIPMIPOLLERS      # IPMI pollers — 0 disables IPMI (default: 0)
+      value: "0"
+    - name: ZBX_STARTHTTPPOLLERS      # HTTP agent pollers (default: 1)
+      value: "2"
+    - name: ZBX_STARTDISCOVERERS      # Network discovery workers (default: 1)
+      value: "2"
+    - name: ZBX_STARTESCALATORS       # Alert escalation workers (default: 1)
+      value: "1"
+    - name: ZBX_STARTPREPROCESSORS    # Value preprocessing workers (default: 3)
+      value: "5"
+    - name: ZBX_STARTTRAPPERS         # Passive-agent / trapper workers (default: 5)
+      value: "5"
+    - name: ZBX_STARTALERTERS        # Alert notification workers (default: 3)
+      value: "3"
+    - name: ZBX_STARTLLDPROCESSORS    # LLD (low-level discovery) workers (default: 2)
+      value: "2"
+    # ── Cache sizes ────────────────────────────────────────────────────────────
+    - name: ZBX_CACHESIZE             # Shared memory for host/item/trigger cache (default: 8M)
+      value: "32M"
+    - name: ZBX_HISTORYCACHESIZE      # History write cache (default: 16M)
+      value: "64M"
+    - name: ZBX_HISTORYINDEXCACHESIZE # Index cache for history (default: 4M)
+      value: "16M"
+    - name: ZBX_TRENDCACHESIZE        # Trend cache (default: 4M)
+      value: "16M"
+    - name: ZBX_VALUECACHESIZE        # Value cache for history queries (default: 8M)
+      value: "64M"
+    # ── Timers and intervals ───────────────────────────────────────────────────
+    - name: ZBX_HOUSEKEEPINGFREQUENCY # How often housekeeping runs in hours (default: 1)
+      value: "1"
+    - name: ZBX_MAXHOUSEKEEPERDELETE # Max DB rows deleted per housekeeping cycle (default: 5000)
+      value: "50000"
+    # ── Example: load a value from a Secret (e.g. Vault token, SMTP password) ─
+    # - name: ZBX_SMTPPASSWORD
+    #   valueFrom:
+    #     secretKeyRef:
+    #       name: zabbix-smtp-creds
+    #       key: password
+    # ── Example: load from a ConfigMap ────────────────────────────────────────
+    # - name: ZBX_LOGSLOWQUERIES
+    #   valueFrom:
+    #     configMapKeyRef:
+    #       name: zabbix-server-tuning
+    #       key: log_slow_queries
+
+  # ── Protected env keys ─────────────────────────────────────────────────────
+  # The operator owns and locks these environment variable keys; any manual edits
+  # to these keys on the Pod spec will be overwritten on the next reconcile.
+  # Default set is populated by the admission webhook if left empty here.
+  # protectedEnvKeys:
+  #   - ZBX_DB_HOST
+  #   - ZBX_DB_PORT
+  #   - ZBX_DB_NAME
+  #   - ZBX_DB_USER
+  #   - ZBX_DB_PASSWORD
+  #   - ZBX_DB_SCHEMA
+  #   - ZBX_HANODENAME
+  #   - ZBX_NODEADDRESS
+  #   - ZBX_DB_TLS_CONNECT
+  #   - ZBX_DB_TLS_CAFILE
+  #   - ZBX_DB_TLS_CERTFILE
+  #   - ZBX_DB_TLS_KEYFILE

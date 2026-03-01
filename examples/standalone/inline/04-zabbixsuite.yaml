@@ -1,0 +1,162 @@
+---
+# ZabbixSuite — Standalone / Inline Mode
+#
+# All Zabbix components declared inside a single ZabbixSuite CR.
+# The operator creates and manages: ZabbixDatabase, ZabbixServer, ZabbixWeb,
+# ZabbixWebService, ZabbixJMX, ZabbixSNMPTrapper.
+#
+# INLINE MODE CHARACTERISTICS
+#   - One CR to rule them all: apply / delete / upgrade in a single step
+#   - Operator owns all component lifecycles
+#   - Components cannot be independently upgraded or owned by separate teams
+#   - Best for: dev, lab, PoC, single-team environments
+#
+# APPLY ORDER
+#   1. Namespace + Secrets + RBAC (00–02)
+#   2. CNPG cluster (03); wait for Ready
+#   3. This file (04)
+#
+# DEPENDENCIES
+#   - CNPG operator installed
+#   - Zabbix operator installed
+#   - zabbix-pg CNPG cluster Ready
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSuite
+metadata:
+  name: my-zabbix
+  namespace: zabbix-dev
+  labels:
+    app.kubernetes.io/name: zabbix-suite
+    app.kubernetes.io/instance: my-zabbix
+    environment: development
+
+spec:
+  # ── Database ──────────────────────────────────────────────────────────────
+  # The operator creates a ZabbixDatabase CR named "my-zabbix-db" and manages
+  # its lifecycle (connect, schema migration gate, flap detection).
+  database:
+    clusterRef:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      name: zabbix-pg
+      namespace: zabbix-dev
+
+    # directServiceRef: the CNPG-auto-created service for non-pooled DDL queries.
+    # Always "<cluster-name>-rw" for CNPG.
+    directServiceRef: zabbix-pg-rw
+
+    # No pooler in standalone mode — Zabbix server connects directly to CNPG RW service.
+    # poolerRef: (omitted)
+
+    # Credential discovery: auto-discovers from the CNPG bootstrap.initdb.secret
+    # (zabbix-db-creds). Override with credentialsRef if using a different Secret.
+    credentialsRef:
+      secretName: zabbix-db-creds
+      usernameKey: username
+      passwordKey: password
+      database: zabbix
+
+    # TLS: disabled for dev/standalone (plaintext is fine in-cluster).
+    # For production with TLS, see examples/production-ha/inline/04-zabbixsuite.yaml.
+    # dbTLS:
+    #   mode: disable
+
+    # Flap detection: lenient thresholds for dev (single-node CNPG won't flap).
+    flapThresholdCount: 3
+    flapThresholdWindow: "120s"
+    trustWindow: "2h"
+
+  # ── Server ────────────────────────────────────────────────────────────────
+  server:
+    image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+
+    # 1 replica = no HA; only one pod runs at a time.
+    # Upgrade to 2 for a hot standby in non-dev environments.
+    replicas: 1
+
+    version: "7.4.0"
+
+    # Lease timing — reduced for single-replica (failover still happens on restart).
+    leaseDuration: "20s"
+    renewDeadline: "15s"
+    retryPeriod: "3s"
+
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+
+    # No TLS for server↔agent in dev.
+    tls:
+      mode: "none"
+
+    # ClusterIP service (in-cluster access only).
+    service:
+      type: ClusterIP
+
+    # Operator sidecar images from ghcr.io/sagh0900 — require imagePullSecrets
+    # on the ServiceAccount (applied via 02-rbac.yaml or manual patch).
+    operatorImages:
+      supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+      leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+      migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+
+    # Minimal tuning for dev — lower pollers and smaller caches.
+    extraEnv:
+      - name: ZBX_STARTPOLLERS
+        value: "3"
+      - name: ZBX_CACHESIZE
+        value: "8M"
+      - name: ZBX_HISTORYCACHESIZE
+        value: "16M"
+
+    upgradePolicy:
+      allowMajorUpgrade: false
+      requireManualApproval: false
+
+  # ── Web ───────────────────────────────────────────────────────────────────
+  web:
+    image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"
+    replicas: 1
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+    # Ingress: disabled in standalone dev. Access via kubectl port-forward instead:
+    #   kubectl port-forward svc/my-zabbix-web 8080:80 -n zabbix-dev
+    ingress:
+      enabled: false
+
+    service:
+      type: ClusterIP
+
+  # ── JMX Gateway (optional) ────────────────────────────────────────────────
+  # Disabled by default in standalone — enable only if monitoring Java apps.
+  jmx:
+    enabled: false
+    # Uncomment to enable:
+    # image: "zabbix/zabbix-java-gateway:ubuntu-7.4-latest"
+    # replicas: 1
+    # port: 10052
+    # resources:
+    #   requests:
+    #     cpu: "50m"
+    #     memory: "128Mi"
+
+  # ── SNMP Trapper (optional) ────────────────────────────────────────────────
+  # Disabled by default — enable if receiving SNMP traps.
+  snmpTrapper:
+    enabled: false
+    # Uncomment to enable:
+    # image: "zabbix/zabbix-snmptrapper:ubuntu-7.4-latest"
+    # replicas: 1
+    # port: 162
+    # mode: DaemonSet   # DaemonSet recommended for SNMP trap reception

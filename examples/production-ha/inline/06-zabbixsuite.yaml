@@ -1,0 +1,378 @@
+---
+# ZabbixSuite — Production HA / Inline Mode
+#
+# Full high-availability configuration with:
+#   - 3-node CNPG PostgreSQL + PgBouncer
+#   - DB TLS (verify-full with mTLS client certificates)
+#   - PSK encryption for server↔agent/proxy communications
+#   - ExtraEnv tuning from ConfigMap (pollers, cache sizes, SMTP)
+#   - LoadBalancer Service for Zabbix agent/proxy traffic (port 10051)
+#   - HTTPS ingress for web UI (with TLS termination at ingress controller)
+#   - Upgrade policy with manual approval and pre-upgrade CNPG backup required
+#   - Anti-affinity to spread server pods across worker nodes
+#
+# APPLY PREREQUISITES (in order):
+#   00-namespace.yaml, 01-secrets.yaml, 02-configmaps.yaml, 03-rbac.yaml
+#   04-cnpg-cluster.yaml (wait: cluster Ready)
+#   05-cnpg-pooler.yaml
+#   Then this file.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSuite
+metadata:
+  name: my-zabbix
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-suite
+    app.kubernetes.io/instance: my-zabbix
+    environment: production
+  annotations:
+    # Track which version this manifest was generated for.
+    zabbix-operator.io/managed-by-version: "2.9"
+
+spec:
+  # ── Database ──────────────────────────────────────────────────────────────
+  database:
+    clusterRef:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      name: zabbix-pg
+      namespace: zabbix-suite
+
+    # PgBouncer pooler: Zabbix server connects here for all normal operations.
+    poolerRef:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Pooler
+      name: zabbix-pg-pooler-rw
+      namespace: zabbix-suite
+
+    # CNPG RW service: used by migration-sentinel for DDL statements.
+    # (PgBouncer transaction mode does not support multi-statement DDL.)
+    directServiceRef: zabbix-pg-rw
+
+    # Custom credentials: explicit reference instead of auto-discovery.
+    # Auto-discovery would find zabbix-db-creds via bootstrap.initdb.secret,
+    # but explicit is clearer in production and immune to CNPG spec changes.
+    credentialsRef:
+      secretName: zabbix-db-creds
+      usernameKey: username
+      passwordKey: password
+      database: zabbix
+
+    # DB TLS: full verification with mTLS client certificates.
+    # verify-full: validates CA chain + hostname — highest security mode.
+    #
+    # Requires:
+    #   cnpg-ca-cert    → CA certificate (Secret with key: ca.crt)
+    #   zabbix-db-client-cert → Client cert + key (Secret with keys: tls.crt, tls.key)
+    #
+    # The operator mounts these as volumes and injects env vars:
+    #   ZabbixServer: ZBX_DB_TLS_CONNECT=verify_full, ZBX_DB_TLS_CAFILE, ZBX_DB_TLS_CERTFILE, ZBX_DB_TLS_KEYFILE
+    #   ZabbixWeb:    ZBX_DB_ENCRYPTION=true, ZBX_DB_CA_FILE, ZBX_DB_CERT_FILE, ZBX_DB_KEY_FILE
+    dbTLS:
+      mode: verify-full
+      caSecretRef:
+        name: cnpg-ca-cert
+        key: ca.crt
+      clientCertSecretRef:
+        name: zabbix-db-client-cert   # must contain tls.crt and tls.key
+
+    # Sensitive flap thresholds for production (CNPG primary changes are rare
+    # in a healthy cluster; flag quickly if they occur).
+    flapThresholdCount: 2
+    flapThresholdWindow: "60s"
+    # Trust window: how long a CNPG status observation is considered fresh.
+    # 1h is reasonable for stable production clusters.
+    trustWindow: "1h"
+
+  # ── Server (HA) ───────────────────────────────────────────────────────────
+  server:
+    image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+
+    # 2 replicas: leader + hot standby.
+    # The operator manages leader election via Kubernetes Lease.
+    # Only the leader binds port 10051; the EndpointSlice routes to leader IP only.
+    replicas: 2
+
+    version: "7.4.0"
+
+    # Lease timing — production defaults (tested in failover scenarios):
+    #   Graceful failover: ~1s (lease released immediately on SIGTERM)
+    #   Force-kill failover: ~2s (pod deleted from API → standby acquires immediately)
+    #   Node crash failover: ~20s (must wait for leaseDuration TTL)
+    leaseDuration: "20s"
+    renewDeadline: "15s"
+    retryPeriod: "3s"
+    deltaNet: "2s"
+    deltaDisk: "1s"
+
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+
+    upgradeResources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+    # PSK encryption for server↔agent and server↔proxy communications.
+    # PSK (Pre-Shared Key): simpler than cert-based TLS; suitable when you
+    # control both server and agent configs.
+    # For certificate-based mTLS between server and agents, use mode: cert.
+    tls:
+      mode: "psk"
+      pskIdentity: "zabbix-server-psk"   # must match ZabbixAgent.spec.tls.pskIdentity
+      pskSecretRef:
+        name: zabbix-server-psk   # Secret with key: psk
+        key: psk
+
+    # Service for Zabbix agents and proxies to reach the active server.
+    # LoadBalancer: exposes port 10051 externally so agents on other networks can connect.
+    # Use type: ClusterIP if agents are always in-cluster.
+    # Use type: NodePort if you don't have a cloud load balancer.
+    service:
+      type: LoadBalancer
+      labels:
+        monitoring.example.com/role: "zabbix-active"
+        # Cloud provider annotations for load balancer customization:
+        # service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+        # service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+
+    # Operator sidecar images from ghcr.io/sagh0900.
+    # The ServiceAccount (03-rbac.yaml) has ghcr-pull-secret pre-attached.
+    operatorImages:
+      supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+      leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+      migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+
+    # ExtraEnv: tuning parameters injected from ConfigMap.
+    # Using configMapKeyRef keeps the CR clean and allows tuning without
+    # modifying the ZabbixSuite CR (separate Git review, different RBAC).
+    #
+    # IMPORTANT: Protected keys (ZBX_DB_*, ZBX_HANODENAME, ZBX_NODEADDRESS,
+    # ZBX_DB_TLS_*) are always operator-owned and cannot be overridden here.
+    extraEnv:
+      # ── From ConfigMap (zabbix-server-tuning) ────────────────────────────
+      - name: ZBX_STARTPOLLERS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_pollers
+      - name: ZBX_STARTPOLLERSUNREACHABLE
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_pollers_unreachable
+      - name: ZBX_STARTIPMIPOLLERS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_ipmi_pollers
+      - name: ZBX_STARTHTTPPOLLERS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_http_pollers
+      - name: ZBX_STARTDISCOVERERS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_discoverers
+      - name: ZBX_STARTESCALATORS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_escalators
+      - name: ZBX_STARTPREPROCESSORS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_preprocessors
+      - name: ZBX_STARTTRAPPERS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_trappers
+      - name: ZBX_STARTALERTERS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_alerters
+      - name: ZBX_STARTLLDPROCESSORS
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: start_lld_processors
+      - name: ZBX_CACHESIZE
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: cache_size
+      - name: ZBX_HISTORYCACHESIZE
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: history_cache_size
+      - name: ZBX_HISTORYINDEXCACHESIZE
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: history_index_cache_size
+      - name: ZBX_TRENDCACHESIZE
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: trend_cache_size
+      - name: ZBX_VALUECACHESIZE
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: value_cache_size
+      - name: ZBX_HOUSEKEEPINGFREQUENCY
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: housekeeping_frequency
+      - name: ZBX_MAXHOUSEKEEPERDELETE
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: max_housekeeper_delete
+      - name: ZBX_LOGSLOWQUERIES
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: log_slow_queries
+
+      # ── From Secret (sensitive values) ──────────────────────────────────
+      - name: ZBX_SMTPPASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: zabbix-smtp-creds
+            key: smtp-password
+
+      # ── Static values ────────────────────────────────────────────────────
+      - name: ZBX_SMTPSERVER
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: smtp_server
+      - name: ZBX_SMTPSERVERPORT
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: smtp_server_port
+      - name: ZBX_SMTPHELO
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: smtp_hello
+      - name: ZBX_SMTPEMAIL
+        valueFrom:
+          configMapKeyRef:
+            name: zabbix-server-tuning
+            key: smtp_email
+
+    upgradePolicy:
+      allowMajorUpgrade: false
+      requireManualApproval: true     # require human sign-off before upgrade
+      manualApprovalGranted: false    # flip to true after pre-flight review
+      cnpgBackupRequired: true        # require successful CNPG backup before DDL
+      sentinelDryRun: false
+
+  # ── Web (HA) ──────────────────────────────────────────────────────────────
+  web:
+    image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"
+    replicas: 2   # 2 replicas: zero-downtime pod kill (Scenario 9)
+
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+
+    # HTTPS ingress via Traefik (or nginx-ingress).
+    # The TLS secret (zabbix-web-tls) must contain a valid certificate for the host.
+    # For cert-manager, annotate with cert-manager.io/cluster-issuer and let it
+    # manage the Secret automatically (delete the manual Secret from 01-secrets.yaml).
+    ingress:
+      enabled: true
+      className: "traefik"    # or "nginx" for nginx-ingress
+      host: "zabbix.example.com"
+      tls:
+        - secretName: zabbix-web-tls
+          hosts:
+            - "zabbix.example.com"
+      annotations:
+        # cert-manager: uncomment to enable automatic TLS certificate management
+        # cert-manager.io/cluster-issuer: letsencrypt-prod
+
+        # Traefik: redirect HTTP → HTTPS
+        traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+        traefik.ingress.kubernetes.io/router.tls: "true"
+
+        # nginx-ingress (alternative):
+        # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+        # nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+
+    service:
+      type: ClusterIP   # ingress controller handles external access
+
+    # No PSK/TLS from web to server (in-cluster; ClusterIP service is trusted).
+    # If you run web pods in a different namespace or cluster, add TLS here.
+
+  # ── JMX Gateway ──────────────────────────────────────────────────────────
+  jmx:
+    enabled: true
+    image: "zabbix/zabbix-java-gateway:ubuntu-7.4-latest"
+    replicas: 2   # 2 replicas for HA; JMX gateway is stateless
+
+    port: 10052   # default; matches ZBX_JAVAGATEWAY_PORT on the server
+
+    javaOptions: "-Xmx512m -Xms256m"   # JVM heap for the gateway process
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+    service:
+      type: ClusterIP
+
+  # ── SNMP Trapper ──────────────────────────────────────────────────────────
+  snmpTrapper:
+    enabled: true
+    image: "zabbix/zabbix-snmptrapper:ubuntu-7.4-latest"
+
+    # DaemonSet: one pod per node ensures SNMP traps sent to any node IP are received.
+    # Use mode: Deployment if you have a dedicated SNMP receiver IP (via LoadBalancer).
+    mode: DaemonSet
+
+    port: 162
+
+    # SNMP trap file: shared between snmptrapd and zabbix-server via volume.
+    # In DaemonSet mode each node writes to /tmp/zabbix_traps.tmp.
+    snmpTrapperFile: "/tmp/zabbix_traps.tmp"
+
+    # hostNetwork: required in DaemonSet mode so pods receive UDP/162 from external sources.
+    # DaemonSet pods listen on the node's real IP (not the pod IP).
+    hostNetwork: true
+
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"

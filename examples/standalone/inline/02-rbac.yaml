@@ -1,0 +1,23 @@
+---
+# ServiceAccount for ZabbixServer pods.
+#
+# The operator creates this SA automatically, but pre-creating it here lets us
+# attach imagePullSecrets BEFORE the first pod is scheduled — avoiding a race
+# condition where the pod fails to pull sidecar images from ghcr.io.
+#
+# After the operator creates its own copy, patch this SA's imagePullSecrets:
+#   kubectl patch serviceaccount zabbix-server -n zabbix-dev \
+#     --type=json \
+#     -p='[{"op":"add","path":"/imagePullSecrets","value":[{"name":"ghcr-pull-secret"}]}]'
+#
+# Alternatively, apply this file ONCE before applying the ZabbixSuite CR so
+# the SA with imagePullSecrets already exists at pod scheduling time.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zabbix-server
+  namespace: zabbix-dev
+  labels:
+    app.kubernetes.io/managed-by: zabbix-operator
+imagePullSecrets:
+  - name: ghcr-pull-secret

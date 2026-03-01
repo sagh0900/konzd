@@ -1,0 +1,171 @@
+---
+# ZabbixServer — Production HA / Decentralized
+#
+# DECENTRALIZED OWNERSHIP: App Team A owns this CR.
+# ZabbixSuite references it via spec.server.existingRef.name = "my-zabbix-server".
+# The operator updates only spec.databaseRef when referenced by ZabbixSuite.
+#
+# HA ARCHITECTURE REMINDER:
+#   - 2 replicas: leader pod (writes to DB, listens on 10051) + standby (idle)
+#   - Leader election via Kubernetes Lease (leaseDuration=20s)
+#   - EndpointSlice "my-zabbix-server-active" routes to leader pod IP only
+#   - Failover tested: graceful ~1s, force-kill ~2s, node crash ~20s
+#
+# VOLUME MOUNTS (operator-managed):
+#   /var/zabbix-heartbeat/beat  — heartbeat file written by lease-sidecar (Unix nanos)
+#   /usr/sbin/supervisor        — supervisor binary injected by initContainer from:
+#                                 ghcr.io/sagh0900/zabbix-supervisor:2.0
+#   /etc/zabbix/ssl/ca/ca.crt  — DB CA cert (mounted when dbTLS.caSecretRef is set)
+#   /etc/zabbix/ssl/certs/      — DB client cert (mounted when dbTLS.clientCertSecretRef set)
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixServer
+metadata:
+  name: my-zabbix-server
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-server
+    app.kubernetes.io/instance: my-zabbix
+    app.kubernetes.io/component: server
+    team: app-team-a
+  annotations:
+    team.example.com/owner: "app-team-a@example.com"
+
+spec:
+  image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+  replicas: 2
+  version: "7.4.0"
+
+  # Injected by ZabbixSuite in link mode; explicit here for standalone operation.
+  databaseRef:
+    name: my-zabbix-db
+
+  leaseDuration: "20s"
+  renewDeadline: "15s"
+  retryPeriod: "3s"
+  deltaNet: "2s"
+  deltaDisk: "1s"
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+  upgradeResources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # PSK encryption for server↔agent/proxy communications.
+  tls:
+    mode: "psk"
+    pskIdentity: "zabbix-server-psk"
+    pskSecretRef:
+      name: zabbix-server-psk
+      key: psk
+
+  # LoadBalancer service: agents and proxies connect to the active server externally.
+  service:
+    type: LoadBalancer
+    labels:
+      monitoring.example.com/role: "zabbix-active"
+
+  operatorImages:
+    supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+    migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+
+  # ExtraEnv: mixed static values, ConfigMap refs, and Secret refs.
+  # Demonstrates all three injection patterns in one block.
+  extraEnv:
+    # From ConfigMap (allows tuning without CR edits)
+    - name: ZBX_STARTPOLLERS
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_pollers
+    - name: ZBX_STARTPOLLERSUNREACHABLE
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_pollers_unreachable
+    - name: ZBX_STARTHTTPPOLLERS
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_http_pollers
+    - name: ZBX_STARTDISCOVERERS
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_discoverers
+    - name: ZBX_STARTESCALATORS
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_escalators
+    - name: ZBX_STARTPREPROCESSORS
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_preprocessors
+    - name: ZBX_STARTTRAPPERS
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_trappers
+    - name: ZBX_STARTALERTERS
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_alerters
+    - name: ZBX_STARTLLDPROCESSORS
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: start_lld_processors
+    - name: ZBX_CACHESIZE
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: cache_size
+    - name: ZBX_HISTORYCACHESIZE
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: history_cache_size
+    - name: ZBX_VALUECACHESIZE
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: value_cache_size
+    - name: ZBX_LOGSLOWQUERIES
+      valueFrom:
+        configMapKeyRef:
+          name: zabbix-server-tuning
+          key: log_slow_queries
+
+    # From Secret (sensitive: never put plain passwords in extraEnv .value)
+    - name: ZBX_SMTPPASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: zabbix-smtp-creds
+          key: smtp-password
+
+    # Static values (non-sensitive tuning directly in CR)
+    - name: ZBX_HOUSEKEEPINGFREQUENCY
+      value: "1"
+    - name: ZBX_MAXHOUSEKEEPERDELETE
+      value: "50000"
+
+  upgradePolicy:
+    allowMajorUpgrade: false
+    requireManualApproval: true
+    manualApprovalGranted: false
+    cnpgBackupRequired: true
+    sentinelDryRun: false

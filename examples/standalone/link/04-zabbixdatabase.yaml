@@ -1,0 +1,43 @@
+---
+# ZabbixDatabase — Standalone (Link Mode)
+#
+# LINK MODE: This CR is pre-created independently and later referenced by name
+# in the ZabbixSuite CR via spec.database.existingRef.name = "my-zabbix-db".
+#
+# The operator reads this CR's status to determine:
+#   - Is the database ready? (DatabaseReady condition)
+#   - What credentials to use? (status.credentialSecretName etc.)
+#   - What host/port should ZabbixServer connect to?
+#
+# OWNERSHIP in link mode:
+#   - This team (DB team) owns the CR spec
+#   - ZabbixSuite controller reads status only; does NOT modify spec
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixDatabase
+metadata:
+  name: my-zabbix-db
+  namespace: zabbix-dev
+  labels:
+    app.kubernetes.io/name: zabbix-database
+    app.kubernetes.io/instance: my-zabbix
+    team: database-team
+
+spec:
+  clusterRef:
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Cluster
+    name: zabbix-pg
+    namespace: zabbix-dev
+
+  directServiceRef: zabbix-pg-rw
+
+  # Explicit credentials reference (link mode best practice: be explicit).
+  credentialsRef:
+    secretName: zabbix-db-creds
+    usernameKey: username
+    passwordKey: password
+    database: zabbix
+
+  flapThresholdCount: 3
+  flapThresholdWindow: "120s"
+  trustWindow: "2h"

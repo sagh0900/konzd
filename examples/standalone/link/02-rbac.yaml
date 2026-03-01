@@ -1,0 +1,10 @@
+---
+# ServiceAccount with imagePullSecrets pre-configured.
+# Pre-create before applying ZabbixServer so sidecar images pull successfully.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zabbix-server
+  namespace: zabbix-dev
+imagePullSecrets:
+  - name: ghcr-pull-secret

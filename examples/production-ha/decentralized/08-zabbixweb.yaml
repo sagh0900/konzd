@@ -1,0 +1,74 @@
+---
+# ZabbixWeb — Production HA / Decentralized
+#
+# DECENTRALIZED OWNERSHIP: Frontend Team owns this CR.
+# ZabbixSuite references it via spec.web.existingRef.name = "my-zabbix-web".
+# The operator updates only spec.serverRef; all other fields are untouched.
+#
+# NGINX listens on port 8080 (non-root); the Service exposes ClusterIP:80 → targetPort:8080.
+# External HTTPS access is via the ingress controller (Traefik or nginx-ingress).
+#
+# DB CONNECTION: ZabbixWeb connects to the CNPG pooler directly using credentials
+# read from ZabbixDatabase.status (resolved by the database controller).
+# DB TLS (verify-full) is injected automatically by the operator from dbTLS on ZabbixDatabase.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixWeb
+metadata:
+  name: my-zabbix-web
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-web
+    app.kubernetes.io/instance: my-zabbix
+    app.kubernetes.io/component: web
+    team: frontend-team
+  annotations:
+    team.example.com/owner: "frontend-team@example.com"
+
+spec:
+  image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"
+
+  # 2 replicas: zero-downtime rolling updates and pod kill resilience.
+  # The Traefik ingress load-balances across both pods automatically.
+  replicas: 2
+
+  # Injected by ZabbixSuite in link mode.
+  serverRef:
+    name: my-zabbix-server
+
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+  # HTTPS ingress. Traefik terminates TLS and forwards HTTP to web pods.
+  # For cert-manager automated certificates, remove the manual TLS secret and annotate:
+  #   cert-manager.io/cluster-issuer: letsencrypt-prod
+  ingress:
+    enabled: true
+    className: "traefik"
+    host: "zabbix.example.com"
+    # Extra hostnames if this Zabbix instance serves multiple FQDNs.
+    extraHosts:
+      - host: "monitoring.example.com"
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: zabbix-web-tls
+        hosts:
+          - "zabbix.example.com"
+          - "monitoring.example.com"
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+      traefik.ingress.kubernetes.io/router.tls: "true"
+      # Rate limit: prevent brute-force attacks on the Zabbix login page.
+      traefik.ingress.kubernetes.io/router.middlewares: "zabbix-suite-ratelimit@kubernetescrd"
+
+  # ClusterIP: ingress controller handles external traffic.
+  service:
+    type: ClusterIP
+    labels:
+      monitoring.example.com/component: "zabbix-web"

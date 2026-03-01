@@ -1,0 +1,64 @@
+---
+# ZabbixJMX — Production HA / Decentralized
+#
+# DECENTRALIZED OWNERSHIP: Platform Team owns this CR.
+# ZabbixSuite references it via spec.jmx.existingRef.name = "my-zabbix-jmx".
+#
+# The Java Gateway bridges Zabbix pollers to JMX-enabled Java applications
+# (Kafka, Cassandra, Tomcat, JBoss, Elasticsearch, etc.).
+#
+# WIRING: ZabbixSuite injects the gateway hostname into ZabbixServer via:
+#   annotation: zabbix.io/jmx-gateway-host: "my-zabbix-jmx.zabbix-suite.svc.cluster.local"
+# This sets ZBX_JAVAGATEWAY and ZBX_JAVAGATEWAYPORT env vars on the server pod.
+#
+# SCALING: The Java Gateway is stateless. Scale replicas proportional to the number
+# of concurrent JMX items being polled. Each JMX connection holds a socket; higher
+# replica count distributes connection load.
+#
+# TARGET JAVA APPS: Ensure JMX remote is enabled on monitored apps:
+#   -Dcom.sun.management.jmxremote
+#   -Dcom.sun.management.jmxremote.port=12345
+#   -Dcom.sun.management.jmxremote.authenticate=false   (or configure auth)
+#   -Dcom.sun.management.jmxremote.ssl=false            (or configure TLS)
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixJMX
+metadata:
+  name: my-zabbix-jmx
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-jmx
+    app.kubernetes.io/instance: my-zabbix
+    app.kubernetes.io/component: jmx
+    team: platform-team
+  annotations:
+    team.example.com/owner: "platform-team@example.com"
+
+spec:
+  image: "zabbix/zabbix-java-gateway:ubuntu-7.4-latest"
+
+  # 2 replicas: the Zabbix server load-balances JMX pollers across both.
+  replicas: 2
+
+  # Injected by ZabbixSuite in link mode.
+  serverRef:
+    name: my-zabbix-server
+
+  port: 10052   # must match ZBX_JAVAGATEWAYPORT on the server (auto-set by operator)
+
+  # JVM options for the Java Gateway process.
+  # -Xmx: max heap — scale if OutOfMemoryError appears under heavy JMX poll load.
+  # -Xms: initial heap — start low; JVM grows as needed.
+  javaOptions: "-Xmx512m -Xms128m -XX:+UseG1GC -XX:MaxGCPauseMillis=100"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "768Mi"   # headroom above -Xmx for JVM overhead
+
+  service:
+    type: ClusterIP
+    labels:
+      monitoring.example.com/component: "zabbix-jmx"

@@ -1,0 +1,69 @@
+# ZabbixJMX — Standalone Manifest (Full Reference)
+#
+# PURPOSE
+#   A ZabbixJMX CR deploys the Zabbix Java Gateway (JMX poller bridge).
+#   The gateway acts as a translator between Zabbix pollers and JMX-enabled Java
+#   applications (JBoss, Tomcat, Kafka, Cassandra, etc.).
+#
+# HOW IT WIRES IN
+#   The Zabbix server connects to the Java Gateway to poll JMX items.
+#   When wired via ZabbixSuite, the operator injects:
+#     annotation: zabbix.io/jmx-gateway-host: "<jmxName>.<namespace>.svc.cluster.local"
+#   which sets ZBX_JAVAGATEWAY and ZBX_JAVAGATEWAYPORT env vars on the server pod.
+#
+# STANDALONE WIRING (without ZabbixSuite)
+#   After creating this CR, annotate the ZabbixServer:
+#     kubectl annotate zabbixserver my-zabbix-server \
+#       zabbix.io/jmx-gateway-host="my-zabbix-jmx.zabbix-suite.svc.cluster.local"
+#
+# DEPENDENCIES
+#   - ZabbixServer CR must exist.
+#   - No database access needed; JMX gateway is a stateless network bridge.
+#   - Target Java processes must be accessible from the cluster network and have
+#     JMX remote enabled (com.sun.management.jmxremote.*).
+#
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixJMX
+metadata:
+  name: my-zabbix-jmx
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-jmx
+    app.kubernetes.io/instance: my-zabbix
+
+spec:
+  # ── Container image ────────────────────────────────────────────────────────
+  image: "zabbix/zabbix-java-gateway:ubuntu-7.4-latest"
+
+  # ── Replica count ──────────────────────────────────────────────────────────
+  # The Java Gateway is stateless; scale based on number of concurrent JMX items.
+  replicas: 2
+
+  # ── ZabbixServer reference ─────────────────────────────────────────────────
+  serverRef:
+    name: my-zabbix-server
+
+  # ── Listen port ────────────────────────────────────────────────────────────
+  # Default: 10052. Must match ZBX_JAVAGATEWAYPORT on the server.
+  port: 10052
+
+  # ── JVM options ────────────────────────────────────────────────────────────
+  # Passed to the JVM as JAVA_OPTIONS env var.
+  # Tune heap sizes based on number of concurrent JMX connections.
+  javaOptions: "-Xmx256m -Xms64m"
+
+  # ── Compute resources ──────────────────────────────────────────────────────
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+  # ── Service customisation ──────────────────────────────────────────────────
+  service:
+    type: ClusterIP
+    labels:
+      monitoring.example.com/component: "zabbix-jmx"

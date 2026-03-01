@@ -1,0 +1,123 @@
+---
+# ZabbixProxy — Production HA / Decentralized
+#
+# DECENTRALIZED OWNERSHIP: Remote Site Team owns this CR.
+# ZabbixSuite references it via spec.proxies[].existingRef.name = "my-zabbix-proxy-eu".
+# existingRef: true → operator reads status only, never modifies spec.
+#
+# USE CASES FOR PROXIES:
+#   - Monitoring remote network segments that cannot be reached from the central server
+#   - Reducing central server load by offloading check execution to proxy
+#   - Monitoring across WAN / high-latency links (proxy buffers locally)
+#   - Network segmentation / firewall traversal
+#
+# ACTIVE vs PASSIVE MODE:
+#   active  (this example):
+#     - Proxy initiates outbound TCP/10051 to the server's active Service
+#     - Works through NAT and firewalls (only outbound traffic required)
+#     - Server cannot reach the proxy; proxy polls and pushes data
+#     - Best for remote sites, DMZ, cloud-to-on-prem, etc.
+#
+#   passive (alternative):
+#     - Server connects to the proxy on port 10051
+#     - Requires the server to reach the proxy's Service IP
+#     - Provides tighter server-side scheduling control
+#     - A Service is created by the operator (ClusterIP or LoadBalancer)
+#
+# STORAGE:
+#   Active proxies buffer collected data in a local SQLite database (default)
+#   or MySQL. Without persistent storage, buffered data is lost on pod restart.
+#   Set storageClass + storageSize for production proxies.
+#
+# POST-DEPLOY REGISTRATION:
+#   After the proxy pod is Running, register it in Zabbix:
+#   Administration → Proxies → Create proxy
+#     Name: my-zabbix-proxy-eu   (must match metadata.name exactly)
+#     Mode: Active
+
+---
+# Active proxy for EU region
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixProxy
+metadata:
+  name: my-zabbix-proxy-eu
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-proxy
+    app.kubernetes.io/instance: my-zabbix
+    app.kubernetes.io/component: proxy
+    team: remote-site-team
+    zabbix.io/proxy-region: eu-west
+  annotations:
+    team.example.com/owner: "remote-site-team@example.com"
+
+spec:
+  image: "zabbix/zabbix-proxy-sqlite3:ubuntu-7.4-latest"
+
+  mode: active   # proxy → server (outbound TCP/10051 only)
+  replicas: 1    # only 1 proxy per name; Zabbix server registers one proxy entry
+
+  # Injected by ZabbixSuite in link mode; set explicitly for standalone operation.
+  serverRef:
+    name: my-zabbix-server
+
+  # Persistent SQLite buffer: survives pod restarts, node reboots.
+  # Size proportional to: monitored hosts × items × check interval × buffer retention.
+  # Rule of thumb: 1GB per 500 hosts monitored through this proxy.
+  storageClass: "nfs-csi"    # ReadWriteMany for portability; ReadWriteOnce works too
+  storageSize: "10Gi"
+
+  # PSK encryption for proxy↔server communication.
+  # pskIdentity must be unique per proxy and registered in Zabbix Administration.
+  # Use the same PSK secret as the server if sharing a cluster-wide PSK,
+  # or create separate per-proxy secrets for stricter isolation.
+  tls:
+    mode: "psk"
+    pskIdentity: "proxy-eu-psk"
+    pskSecretRef:
+      name: zabbix-server-psk   # reuse server PSK secret (same cluster)
+      key: psk
+
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+---
+# Passive proxy example (uncomment for server-initiated polling pattern)
+#
+# apiVersion: zabbix.io/v1alpha1
+# kind: ZabbixProxy
+# metadata:
+#   name: my-zabbix-proxy-apac
+#   namespace: zabbix-suite
+#   labels:
+#     zabbix.io/proxy-region: apac
+# spec:
+#   image: "zabbix/zabbix-proxy-sqlite3:ubuntu-7.4-latest"
+#   mode: passive
+#   replicas: 1
+#   serverRef:
+#     name: my-zabbix-server
+#   storageClass: "nfs-csi"
+#   storageSize: "5Gi"
+#   tls:
+#     mode: "psk"
+#     pskIdentity: "proxy-apac-psk"
+#     pskSecretRef:
+#       name: proxy-apac-psk-secret
+#       key: psk
+#   # Service: operator creates this automatically for passive mode.
+#   # Server connects to this Service on port 10051.
+#   service:
+#     type: ClusterIP   # or LoadBalancer if server is in a different cluster/network
+#   resources:
+#     requests:
+#       cpu: "200m"
+#       memory: "256Mi"
+#     limits:
+#       cpu: "1"
+#       memory: "1Gi"

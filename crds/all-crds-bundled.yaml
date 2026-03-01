@@ -1,0 +1,3473 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixservers.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixServer
+    listKind: ZabbixServerList
+    plural: zabbixservers
+    shortNames:
+    - zsrv
+    singular: zabbixserver
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='ServerReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .status.runningVersion
+      name: Version
+      type: string
+    - jsonPath: .status.currentLeader
+      name: Leader
+      type: string
+    - jsonPath: .status.upgradePhase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ZabbixServer is the Schema for the zabbixservers API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ZabbixServerSpec defines the desired state of ZabbixServer.
+            properties:
+              databaseRef:
+                description: Reference to ZabbixDatabase CR.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      TODO: Add other useful fields. apiVersion, kind, uid?
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              deltaDisk:
+                default: 1s
+                description: P99 disk I/O wait estimate for heartbeat formula.
+                type: string
+              deltaNet:
+                default: 2s
+                description: P99 network latency estimate for heartbeat formula.
+                type: string
+              extraEnv:
+                description: |-
+                  ExtraEnv contains additional environment variables injected into the zabbix-server
+                  container after the operator's own env vars are applied. Typical use: Zabbix process
+                  tuning (pollers, preprocessors, timers, cache sizes) that you previously set in a
+                  Helm values file.
+
+
+                  Merge rules (enforced by MergeEnvVars):
+                    - Protected keys (ZBX_DB_*, ZBX_HANODENAME, ZBX_NODEADDRESS, ZBX_DB_TLS_*)
+                      are always operator-owned; any ExtraEnv entry with a protected key is silently
+                      ignored and the operator value is retained.
+                    - All other keys are accepted. If a key already exists in the operator defaults
+                      it is overridden; new keys are appended.
+
+
+                  Full corev1.EnvVar syntax is supported: plain Value, SecretKeyRef, ConfigMapKeyRef,
+                  FieldRef, and ResourceFieldRef.
+                items:
+                  description: EnvVar represents an environment variable present in
+                    a Container.
+                  properties:
+                    name:
+                      description: Name of the environment variable. Must be a C_IDENTIFIER.
+                      type: string
+                    value:
+                      description: |-
+                        Variable references $(VAR_NAME) are expanded
+                        using the previously defined environment variables in the container and
+                        any service environment variables. If a variable cannot be resolved,
+                        the reference in the input string will be unchanged. Double $$ are reduced
+                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                        Escaped references will never be expanded, regardless of whether the variable
+                        exists or not.
+                        Defaults to "".
+                      type: string
+                    valueFrom:
+                      description: Source for the environment variable's value. Cannot
+                        be used if value is not empty.
+                      properties:
+                        configMapKeyRef:
+                          description: Selects a key of a ConfigMap.
+                          properties:
+                            key:
+                              description: The key to select.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                TODO: Add other useful fields. apiVersion, kind, uid?
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                              type: string
+                            optional:
+                              description: Specify whether the ConfigMap or its key
+                                must be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fieldRef:
+                          description: |-
+                            Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                            spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                          properties:
+                            apiVersion:
+                              description: Version of the schema the FieldPath is
+                                written in terms of, defaults to "v1".
+                              type: string
+                            fieldPath:
+                              description: Path of the field to select in the specified
+                                API version.
+                              type: string
+                          required:
+                          - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        resourceFieldRef:
+                          description: |-
+                            Selects a resource of the container: only resources limits and requests
+                            (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                          properties:
+                            containerName:
+                              description: 'Container name: required for volumes,
+                                optional for env vars'
+                              type: string
+                            divisor:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Specifies the output format of the exposed
+                                resources, defaults to "1"
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            resource:
+                              description: 'Required: resource to select'
+                              type: string
+                          required:
+                          - resource
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        secretKeyRef:
+                          description: Selects a key of a secret in the pod's namespace
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                TODO: Add other useful fields. apiVersion, kind, uid?
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+              heartbeatThreshold:
+                description: |-
+                  Derived: T_hb = (T_lease - (delta_net + delta_disk)) / 2
+                  Admission webhook computes and injects this if not set.
+                type: string
+              image:
+                description: Container image for zabbix-server.
+                type: string
+              leaseDuration:
+                default: 20s
+                description: Lease duration for HA leader election.
+                type: string
+              operatorImages:
+                description: |-
+                  OperatorImages allows overriding the images used for operator-injected sidecar
+                  and init containers (supervisor, lease-sidecar, migration-sentinel).
+                properties:
+                  leaseSidecarImage:
+                    description: |-
+                      LeaseSidecarImage is the image for the lease-sidecar container.
+                      It acquires the Kubernetes Lease and writes a heartbeat file.
+                      Defaults to ghcr.io/sagh0900/zabbix-lease-sidecar:2.0.
+                    type: string
+                  migrationSentinelImage:
+                    description: |-
+                      MigrationSentinelImage is the image used for the migration-check init container
+                      during schema upgrades.
+                      Defaults to ghcr.io/sagh0900/zabbix-migration-sentinel:2.0.
+                    type: string
+                  supervisorImage:
+                    description: |-
+                      SupervisorImage is the image used in the install-supervisor init container.
+                      The supervisor binary is copied from this image into a shared EmptyDir volume
+                      so the official Zabbix image is not modified.
+                      Defaults to ghcr.io/sagh0900/zabbix-supervisor:2.0.
+                    type: string
+                type: object
+              protectedEnvKeys:
+                description: Env var keys the operator always controls. User overrides
+                  are silently ignored.
+                items:
+                  type: string
+                type: array
+              renewDeadline:
+                default: 15s
+                description: 'RenewDeadline: stop heartbeats and fence if lease not
+                  renewed within this window.'
+                type: string
+              replicas:
+                default: 1
+                description: Number of server replicas (HA).
+                format: int32
+                maximum: 3
+                minimum: 1
+                type: integer
+              resources:
+                description: ResourceRequirements describes the compute resource requirements.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              retryPeriod:
+                default: 3s
+                description: 'RetryPeriod: interval for non-holder pods to attempt
+                  lease acquisition.'
+                type: string
+              serverSpecRef:
+                description: Reference to a ConfigMap for deep Zabbix server tuning
+                  overrides.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      TODO: Add other useful fields. apiVersion, kind, uid?
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              service:
+                description: Service customisation for the active-leader service (port
+                  10051).
+                properties:
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Additional labels applied to the Service.
+                    type: object
+                  ports:
+                    description: Port overrides. If empty, operator uses sensible
+                      defaults.
+                    items:
+                      description: ServicePortSpec defines an individual port on a
+                        Service.
+                      properties:
+                        name:
+                          type: string
+                        nodePort:
+                          description: NodePort is only valid when service type is
+                            NodePort.
+                          format: int32
+                          type: integer
+                        port:
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      - port
+                      type: object
+                    type: array
+                  type:
+                    default: ClusterIP
+                    enum:
+                    - ClusterIP
+                    - NodePort
+                    - LoadBalancer
+                    type: string
+                type: object
+              tls:
+                description: TLS configuration for server-to-proxy and server-to-agent
+                  communication.
+                properties:
+                  autoGenerate:
+                    description: If true, generate a self-signed CA and cert automatically.
+                    type: boolean
+                  certSecretRef:
+                    description: 'For cert mode: reference to a Secret containing
+                      tls.crt, tls.key, ca.crt'
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  mode:
+                    default: none
+                    description: 'Mode: none | psk | cert'
+                    enum:
+                    - none
+                    - psk
+                    - cert
+                    type: string
+                  pskIdentity:
+                    description: 'For psk mode: PSK identity string'
+                    type: string
+                  pskSecretRef:
+                    description: 'For psk mode: reference to a Secret containing the
+                      PSK value'
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+              upgradePolicy:
+                description: Upgrade policy — required for major version bumps.
+                properties:
+                  allowMajorUpgrade:
+                    description: Must be explicitly true to allow a major-version
+                      crossing (e.g. 7.x → 8.0).
+                    type: boolean
+                  cnpgBackupRequired:
+                    description: A CNPG Backup CR must be successfully completed before
+                      schema upgrade begins.
+                    type: boolean
+                  manualApprovalGranted:
+                    description: Set to true by human operator to unblock a halted
+                      upgrade after manual remediation.
+                    type: boolean
+                  proxyCompatibilityCheck:
+                    description: Verify proxy-to-host-group assignments after upgrade.
+                    type: boolean
+                  requireManualApproval:
+                    description: Require a human to flip manualApprovalGranted before
+                      the state machine advances.
+                    type: boolean
+                  sentinelDryRun:
+                    description: Run migration-sentinel in --dry-run mode to enumerate
+                      patches without executing.
+                    type: boolean
+                type: object
+              upgradeResources:
+                description: Resources for the migration sentinel Job during upgrades.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              version:
+                description: Desired Zabbix version (e.g. "7.4.0").
+                pattern: ^\d+\.\d+\.\d+$
+                type: string
+            required:
+            - databaseRef
+            - image
+            - replicas
+            type: object
+          status:
+            description: ZabbixServerStatus defines the observed state of ZabbixServer.
+            properties:
+              activeReplicas:
+                description: ActiveReplicas is the number of Running server pods at
+                  last reconcile.
+                format: int32
+                type: integer
+              conditions:
+                description: |-
+                  Conditions: ServerReady, LeaderElected, UpgradeInProgress,
+                              ManualInterventionRequired, UpgradeBlocked, LeadershipUnstable
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              currentLeader:
+                description: CurrentLeader is the pod name currently holding the Lease.
+                type: string
+              leaderSince:
+                description: LeaderSince is the time the current leader acquired the
+                  Lease.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+              recentLeaderTransitions:
+                description: |-
+                  RecentLeaderTransitions records the last 20 leader change timestamps.
+                  Used to detect leadership flapping (more than 3 transitions in 10 min).
+                items:
+                  format: date-time
+                  type: string
+                type: array
+              runningImageDigest:
+                description: |-
+                  RunningImageDigest is the last-known registry digest of the running image.
+                  Used for digest-based upgrade detection (triggers upgrade even on silent tag re-push).
+                type: string
+              runningVersion:
+                description: RunningVersion is the Zabbix version currently running
+                  in the DB.
+                type: string
+              upgradePhase:
+                description: UpgradePhase tracks the current upgrade state machine
+                  phase.
+                enum:
+                - Idle
+                - PreFlight
+                - SingleNode
+                - DirectDB
+                - SchemaUpgrade
+                - PostUpgrade
+                - Healthy
+                - ManualInterventionRequired
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixdatabases.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixDatabase
+    listKind: ZabbixDatabaseList
+    plural: zabbixdatabases
+    shortNames:
+    - zdb
+    singular: zabbixdatabase
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='DatabaseReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .status.currentPrimary
+      name: Primary
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ZabbixDatabase is the Schema for the zabbixdatabases API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ZabbixDatabaseSpec defines the desired state of ZabbixDatabase.
+            properties:
+              clusterRef:
+                description: Reference to existing CNPG Cluster CR.
+                properties:
+                  apiVersion:
+                    description: API version of the referent.
+                    type: string
+                  fieldPath:
+                    description: |-
+                      If referring to a piece of an object instead of an entire object, this string
+                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                      For example, if the object reference is to a container within a pod, this would take on a value like:
+                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                      the event) or if no container name is specified "spec.containers[2]" (container with
+                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                      referencing a part of an object.
+                      TODO: this design is not final and this field is subject to change in the future.
+                    type: string
+                  kind:
+                    description: |-
+                      Kind of the referent.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                    type: string
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                    type: string
+                  resourceVersion:
+                    description: |-
+                      Specific resourceVersion to which this reference is made, if any.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                    type: string
+                  uid:
+                    description: |-
+                      UID of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              credentialsRef:
+                description: |-
+                  CredentialsRef points to a Secret with database credentials.
+                  If unset, credentials are auto-discovered from the CNPG app secret
+                  (secret named "<cluster>-app" with keys "username" and "password").
+                properties:
+                  database:
+                    default: zabbix
+                    description: Database is the PostgreSQL database name to connect
+                      to.
+                    type: string
+                  passwordKey:
+                    default: password
+                    description: PasswordKey is the key in the Secret for the database
+                      password.
+                    type: string
+                  secretName:
+                    description: SecretName is the name of the Secret (same namespace
+                      as ZabbixDatabase).
+                    type: string
+                  usernameKey:
+                    default: username
+                    description: UsernameKey is the key in the Secret for the database
+                      username.
+                    type: string
+                required:
+                - secretName
+                type: object
+              dbTLS:
+                description: |-
+                  DBTLS configures TLS for connections from Zabbix components to the database/pooler.
+                  If unset, connections use plaintext.
+                properties:
+                  caSecretRef:
+                    description: |-
+                      CASecretRef points to a Secret containing the CA certificate.
+                      Required for verify-ca and verify-full modes.
+                      Secret key defaults to "ca.crt"; override with .key field.
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  clientCertSecretRef:
+                    description: |-
+                      ClientCertSecretRef points to a Secret with client certificate and key (mTLS).
+                      Secret must contain keys "tls.crt" and "tls.key".
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  mode:
+                    default: disable
+                    description: |-
+                      Mode controls TLS enforcement.
+                      disable    — plaintext (default)
+                      require    — TLS required, certificate not verified
+                      verify-ca  — TLS + CA verification
+                      verify-full — TLS + CA + hostname verification (recommended for production)
+                    enum:
+                    - disable
+                    - require
+                    - verify-ca
+                    - verify-full
+                    type: string
+                type: object
+              directServiceRef:
+                description: Direct primary service name (used during upgrades, bypasses
+                  pooler).
+                type: string
+              flapThresholdCount:
+                default: 2
+                description: Number of primary-changes within FlapThresholdWindow
+                  that triggers flap detection.
+                type: integer
+              flapThresholdWindow:
+                default: 60s
+                description: Sliding window for flap detection.
+                type: string
+              poolerRef:
+                description: Reference to CNPG Pooler CR (PgBouncer).
+                properties:
+                  apiVersion:
+                    description: API version of the referent.
+                    type: string
+                  fieldPath:
+                    description: |-
+                      If referring to a piece of an object instead of an entire object, this string
+                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                      For example, if the object reference is to a container within a pod, this would take on a value like:
+                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                      the event) or if no container name is specified "spec.containers[2]" (container with
+                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                      referencing a part of an object.
+                      TODO: this design is not final and this field is subject to change in the future.
+                    type: string
+                  kind:
+                    description: |-
+                      Kind of the referent.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                    type: string
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                    type: string
+                  resourceVersion:
+                    description: |-
+                      Specific resourceVersion to which this reference is made, if any.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                    type: string
+                  uid:
+                    description: |-
+                      UID of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              trustWindow:
+                default: 3m
+                description: Staleness window for CNPG status. Must be >= 3x CNPG
+                  sync period.
+                type: string
+            required:
+            - clusterRef
+            - directServiceRef
+            - poolerRef
+            type: object
+          status:
+            description: ZabbixDatabaseStatus defines the observed state of ZabbixDatabase.
+            properties:
+              conditions:
+                description: 'Conditions: DatabaseReady, PoolerReady, StatusFresh,
+                  DatabaseFlapping, QuorumLost'
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              credentialDatabase:
+                type: string
+              credentialPasswordKey:
+                type: string
+              credentialSecretName:
+                description: Resolved credential details (set by controller; read
+                  by ZabbixServer and ZabbixWeb).
+                type: string
+              credentialUsernameKey:
+                type: string
+              currentPrimary:
+                description: CurrentPrimary is the pod name of the CNPG primary last
+                  seen in a fresh status.
+                type: string
+              flapCount:
+                description: FlapCount tracks how many primary changes occurred within
+                  the current window.
+                type: integer
+              lastStatusTime:
+                description: LastStatusTime is when the CNPG status was last successfully
+                  read.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixsuites.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixSuite
+    listKind: ZabbixSuiteList
+    plural: zabbixsuites
+    shortNames:
+    - zsuite
+    singular: zabbixsuite
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='SuiteReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .status.runningVersion
+      name: Running
+      type: string
+    - jsonPath: .status.enabledComponents
+      name: Components
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ZabbixSuite is the Schema for the zabbixsuites API.
+          It orchestrates the full Zabbix monitoring stack as a single, cohesive unit.
+
+
+          Required components (always created by the operator):
+            - ZabbixDatabase — wraps the CNPG cluster
+            - ZabbixServer   — the monitoring engine
+
+
+          Optional components (created only when their section is present in spec):
+            - Web, WebService, JMX, SNMPTrapper, Proxies[], Agents[]
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: "ZabbixSuiteSpec defines the desired state of ZabbixSuite.\n\n\nComponent
+              optionality summary:\n\n\n\tRequired (always created):\n\t  - CNPG       —
+              CloudNativePG PostgreSQL database backend\n\t  - Server     — ZabbixServer
+              (core monitoring engine)\n\n\n\tOptional — include only what your environment
+              requires:\n\t  - Web        — Nginx-based web frontend (recommended
+              for interactive use)\n\t  - WebService — Report-rendering micro-service
+              (needed for scheduled reports)\n\t  - JMX        — Java Gateway for
+              JMX/JVM monitoring\n\t  - SNMPTrapper — Receives SNMP trap events (only
+              for trap-based alerting)\n\t  - Proxies    — Distributed monitoring
+              agents (list; omit for central-only)\n\t  - Agents     — Zabbix Agent
+              DaemonSets/Deployments (list; omit if external)"
+            properties:
+              agents:
+                description: |-
+                  Agents is a list of ZabbixAgent CRs to deploy for host-level monitoring.
+                  Multiple agent sets allow different configurations per node group.
+                  Optional — omit when agents are managed externally or not required.
+                items:
+                  description: ZabbixSuiteAgentRef configures one ZabbixAgent entry
+                    within the suite.
+                  properties:
+                    existingRef:
+                      description: ExistingRef, when true, links to an externally
+                        managed ZabbixAgent CR.
+                      type: boolean
+                    name:
+                      description: Name of this agent entry. Used as the child CR
+                        name when creating inline.
+                      type: string
+                    spec:
+                      description: Spec is the inline ZabbixAgentSpec (raw JSON).
+                        Ignored when ExistingRef=true.
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - name
+                  type: object
+                type: array
+              cnpg:
+                description: |-
+                  CNPG defines the CloudNativePG PostgreSQL cluster that backs the Zabbix database.
+                  The operator watches this cluster for readiness and failover events.
+                properties:
+                  clusterRef:
+                    description: ClusterRef points to the existing CNPG Cluster CR.
+                    properties:
+                      apiVersion:
+                        description: API version of the referent.
+                        type: string
+                      fieldPath:
+                        description: |-
+                          If referring to a piece of an object instead of an entire object, this string
+                          should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                          For example, if the object reference is to a container within a pod, this would take on a value like:
+                          "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                          the event) or if no container name is specified "spec.containers[2]" (container with
+                          index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                          referencing a part of an object.
+                          TODO: this design is not final and this field is subject to change in the future.
+                        type: string
+                      kind:
+                        description: |-
+                          Kind of the referent.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                        type: string
+                      name:
+                        description: |-
+                          Name of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                        type: string
+                      resourceVersion:
+                        description: |-
+                          Specific resourceVersion to which this reference is made, if any.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                        type: string
+                      uid:
+                        description: |-
+                          UID of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  directServiceName:
+                    description: |-
+                      DirectServiceName is the name of the CNPG primary-direct Service used during
+                      upgrade schema migrations (bypasses the pooler for DDL statements).
+                    type: string
+                  poolerRef:
+                    description: PoolerRef points to the existing CNPG Pooler CR (PgBouncer
+                      connection pooler).
+                    properties:
+                      apiVersion:
+                        description: API version of the referent.
+                        type: string
+                      fieldPath:
+                        description: |-
+                          If referring to a piece of an object instead of an entire object, this string
+                          should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                          For example, if the object reference is to a container within a pod, this would take on a value like:
+                          "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                          the event) or if no container name is specified "spec.containers[2]" (container with
+                          index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                          referencing a part of an object.
+                          TODO: this design is not final and this field is subject to change in the future.
+                        type: string
+                      kind:
+                        description: |-
+                          Kind of the referent.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                        type: string
+                      name:
+                        description: |-
+                          Name of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                        type: string
+                      resourceVersion:
+                        description: |-
+                          Specific resourceVersion to which this reference is made, if any.
+                          More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                        type: string
+                      uid:
+                        description: |-
+                          UID of the referent.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  trustWindow:
+                    default: 3m
+                    description: |-
+                      TrustWindow is the maximum age of a CNPG status observation before the
+                      operator considers it stale and blocks upgrades.
+                    type: string
+                required:
+                - clusterRef
+                - directServiceName
+                - poolerRef
+                type: object
+              jmx:
+                description: |-
+                  JMX customises the ZabbixJMX (Java Gateway) child CR.
+                  If omitted, JMX/JVM monitoring is unavailable.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              operatorImages:
+                description: |-
+                  OperatorImages overrides the default images for operator-injected sidecar/init
+                  containers (supervisor, lease-sidecar, migration-sentinel) suite-wide.
+                  Propagated to the ZabbixServer child CR when not overridden at the component level.
+                properties:
+                  leaseSidecarImage:
+                    description: |-
+                      LeaseSidecarImage is the image for the lease-sidecar container.
+                      It acquires the Kubernetes Lease and writes a heartbeat file.
+                      Defaults to ghcr.io/sagh0900/zabbix-lease-sidecar:2.0.
+                    type: string
+                  migrationSentinelImage:
+                    description: |-
+                      MigrationSentinelImage is the image used for the migration-check init container
+                      during schema upgrades.
+                      Defaults to ghcr.io/sagh0900/zabbix-migration-sentinel:2.0.
+                    type: string
+                  supervisorImage:
+                    description: |-
+                      SupervisorImage is the image used in the install-supervisor init container.
+                      The supervisor binary is copied from this image into a shared EmptyDir volume
+                      so the official Zabbix image is not modified.
+                      Defaults to ghcr.io/sagh0900/zabbix-supervisor:2.0.
+                    type: string
+                type: object
+              proxies:
+                description: |-
+                  Proxies is a list of ZabbixProxy CRs to create for distributed monitoring.
+                  Each entry is independently configured with its own image, mode, and storage.
+                  Optional — omit entirely for centralised (non-proxy) monitoring topologies.
+                items:
+                  description: ZabbixSuiteProxyRef configures one ZabbixProxy entry
+                    within the suite.
+                  properties:
+                    existingRef:
+                      description: |-
+                        ExistingRef, when true, links to an externally managed ZabbixProxy CR
+                        named Name instead of creating one. The operator will not reconcile its spec.
+                      type: boolean
+                    name:
+                      description: Name of this proxy entry. Used as the child CR
+                        name when creating inline.
+                      type: string
+                    spec:
+                      description: Spec is the inline ZabbixProxySpec (raw JSON).
+                        Ignored when ExistingRef=true.
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - name
+                  type: object
+                type: array
+              server:
+                description: |-
+                  Server customises the ZabbixServer child CR.
+                  If omitted, a ZabbixServer is created with sensible defaults derived from Version
+                  and the CNPG connection details. Always created; this field is for overrides only.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              snmpTrapper:
+                description: |-
+                  SNMPTrapper deploys a ZabbixSNMPTrapper child CR to receive SNMP trap events.
+                  Optional — only needed when Zabbix must act as an SNMP trap receiver.
+                  If omitted, no SNMP trapper is deployed.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              storageReclaimPolicy:
+                allOf:
+                - enum:
+                  - Retain
+                  - Delete
+                - enum:
+                  - Retain
+                  - Delete
+                default: Retain
+                description: |-
+                  StorageReclaimPolicy controls what happens to persistent data when the ZabbixSuite
+                  is deleted. Defaults to Retain to prevent accidental data loss.
+
+
+                    Retain  — removes ownerReferences from ZabbixDatabase, CNPG Cluster, and PVCs
+                              so they survive suite deletion. Safe default.
+                    Delete  — cascades deletion to all owned resources including PVCs.
+                              Use only when the data is expendable (dev/test).
+                type: string
+              upgradePolicy:
+                description: |-
+                  UpgradePolicy controls how and when version upgrades are executed.
+                  Propagated to the ZabbixServer child CR.
+                properties:
+                  allowMajorUpgrade:
+                    description: Must be explicitly true to allow a major-version
+                      crossing (e.g. 7.x → 8.0).
+                    type: boolean
+                  cnpgBackupRequired:
+                    description: A CNPG Backup CR must be successfully completed before
+                      schema upgrade begins.
+                    type: boolean
+                  manualApprovalGranted:
+                    description: Set to true by human operator to unblock a halted
+                      upgrade after manual remediation.
+                    type: boolean
+                  proxyCompatibilityCheck:
+                    description: Verify proxy-to-host-group assignments after upgrade.
+                    type: boolean
+                  requireManualApproval:
+                    description: Require a human to flip manualApprovalGranted before
+                      the state machine advances.
+                    type: boolean
+                  sentinelDryRun:
+                    description: Run migration-sentinel in --dry-run mode to enumerate
+                      patches without executing.
+                    type: boolean
+                type: object
+              version:
+                description: |-
+                  Version is the desired Zabbix version for the whole suite (e.g. "7.4.0").
+                  The operator propagates this to all child CRs and drives the upgrade state machine.
+                pattern: ^\d+\.\d+\.\d+$
+                type: string
+              web:
+                description: |-
+                  Web customises the ZabbixWeb (Nginx + PHP-FPM) child CR.
+                  If omitted, no web frontend is deployed (API-only setup).
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              webService:
+                description: |-
+                  WebService customises the ZabbixWebService child CR (scheduled-report renderer).
+                  If omitted, the web-service is not deployed and scheduled PDF reports are unavailable.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether this component is deployed and reconciled.
+                      Defaults to true when the section is present. Set to false to park the spec
+                      without deploying the component (for staged rollouts or temporary disables).
+                    type: boolean
+                  name:
+                    description: |-
+                      Name of an existing child CR to link to instead of creating one.
+                      The operator will only update the child's ServerRef to ensure correct wiring.
+                      Mutually exclusive with Spec.
+                    type: string
+                  spec:
+                    description: |-
+                      Spec is an inline spec for the child CR (raw JSON, decoded per component type).
+                      The operator creates and fully manages this CR. Mutually exclusive with Name.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+            required:
+            - cnpg
+            - version
+            type: object
+          status:
+            description: ZabbixSuiteStatus defines the observed state of ZabbixSuite.
+            properties:
+              activeReplicas:
+                description: ActiveReplicas is the number of ready replicas in the
+                  server Deployment.
+                format: int32
+                type: integer
+              conditions:
+                description: |-
+                  Conditions summarises the suite's overall health.
+                    SuiteReady         — true when all required (+ present optional) children are ready
+                    DatabaseReady      — mirrors ZabbixDatabase.status.conditions[DatabaseReady]
+                    ServerReady        — mirrors ZabbixServer.status.conditions[ServerReady]
+                    UpgradeInProgress  — true while the upgrade state machine is active
+                    DegradedComponent  — set when an optional component is unhealthy
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              databaseReady:
+                description: DatabaseReady mirrors ZabbixDatabase.status.conditions[DatabaseReady].
+                type: boolean
+              enabledComponents:
+                description: |-
+                  EnabledComponents lists which optional components are currently deployed
+                  by this suite. Always includes "server" and "database".
+                items:
+                  type: string
+                type: array
+              leaderPod:
+                description: LeaderPod is the name of the pod currently holding the
+                  Lease.
+                type: string
+              leaderSince:
+                description: LeaderSince is the time the current leader acquired the
+                  Lease.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+              phase:
+                description: Phase mirrors ZabbixServer.status.upgradePhase.
+                type: string
+              runningVersion:
+                description: RunningVersion reflects the Zabbix version currently
+                  active on the server.
+                type: string
+              schemaReady:
+                description: SchemaReady mirrors ZabbixDatabase.status.conditions[SchemaReady].
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixwebs.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixWeb
+    listKind: ZabbixWebList
+    plural: zabbixwebs
+    shortNames:
+    - zweb
+    singular: zabbixweb
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='WebReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.maintenanceMode
+      name: Maintenance
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ZabbixWeb is the Schema for the zabbixwebs API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ZabbixWebSpec defines the desired state of ZabbixWeb.
+            properties:
+              image:
+                description: Container image for zabbix-web-nginx-pgsql.
+                type: string
+              ingress:
+                description: Full ingress configuration.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations applied to the Ingress object.
+                      For Traefik-specific settings prefer MiddlewareRefs and EntryPoints below.
+                    type: object
+                  className:
+                    default: traefik
+                    type: string
+                  enabled:
+                    default: false
+                    description: Enable ingress creation.
+                    type: boolean
+                  entryPoints:
+                    description: |-
+                      EntryPoints lists the Traefik entry point names to expose this Ingress on.
+                      Composed into traefik.ingress.kubernetes.io/router.entrypoints.
+                      Example: ["websecure"]  — usually inferred from TLS presence, set explicitly if needed.
+                    items:
+                      type: string
+                    type: array
+                  extraHosts:
+                    description: Additional hosts beyond the primary.
+                    items:
+                      description: ZabbixIngressHost defines an additional Ingress
+                        host entry.
+                      properties:
+                        host:
+                          type: string
+                        path:
+                          type: string
+                        pathType:
+                          description: PathType represents the type of path referred
+                            to by a HTTPIngressPath.
+                          type: string
+                      required:
+                      - host
+                      type: object
+                    type: array
+                  host:
+                    description: Primary hostname (e.g. zabbix.example.com).
+                    type: string
+                  middlewareRefs:
+                    description: |-
+                      MiddlewareRefs lists names of Traefik Middleware CRs in the same namespace.
+                      The operator composes them into the
+                      traefik.ingress.kubernetes.io/router.middlewares annotation automatically.
+                      Example: ["zabbix-web-compress", "zabbix-web-headers"]
+                    items:
+                      type: string
+                    type: array
+                  path:
+                    default: /
+                    description: Override default path "/".
+                    type: string
+                  pathType:
+                    default: Prefix
+                    description: Path type for all rules.
+                    enum:
+                    - Exact
+                    - Prefix
+                    - ImplementationSpecific
+                    type: string
+                  servicePort:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    default: http
+                    description: Backend service port name or number.
+                    x-kubernetes-int-or-string: true
+                  tls:
+                    description: TLS configuration for the Ingress.
+                    items:
+                      description: IngressTLS describes the transport layer security
+                        associated with an ingress.
+                      properties:
+                        hosts:
+                          description: |-
+                            hosts is a list of hosts included in the TLS certificate. The values in
+                            this list must match the name/s used in the tlsSecret. Defaults to the
+                            wildcard host setting for the loadbalancer controller fulfilling this
+                            Ingress, if left unspecified.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        secretName:
+                          description: |-
+                            secretName is the name of the secret used to terminate TLS traffic on
+                            port 443. Field is left optional to allow TLS routing based on SNI
+                            hostname alone. If the SNI host in a listener conflicts with the "Host"
+                            header field used by an IngressRule, the SNI host is used for termination
+                            and value of the "Host" header is used for routing.
+                          type: string
+                      type: object
+                    type: array
+                required:
+                - enabled
+                type: object
+              maintenanceMode:
+                description: |-
+                  When true, swaps Deployment to serve HTTP 503 maintenance page.
+                  Does NOT scale to 0 — keeps Service endpoint alive.
+                type: boolean
+              replicas:
+                default: 1
+                format: int32
+                type: integer
+              resources:
+                description: ResourceRequirements describes the compute resource requirements.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              serverRef:
+                description: Reference to ZabbixServer CR.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      TODO: Add other useful fields. apiVersion, kind, uid?
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              service:
+                description: Service customisation.
+                properties:
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Additional labels applied to the Service.
+                    type: object
+                  ports:
+                    description: Port overrides. If empty, operator uses sensible
+                      defaults.
+                    items:
+                      description: ServicePortSpec defines an individual port on a
+                        Service.
+                      properties:
+                        name:
+                          type: string
+                        nodePort:
+                          description: NodePort is only valid when service type is
+                            NodePort.
+                          format: int32
+                          type: integer
+                        port:
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      - port
+                      type: object
+                    type: array
+                  type:
+                    default: ClusterIP
+                    enum:
+                    - ClusterIP
+                    - NodePort
+                    - LoadBalancer
+                    type: string
+                type: object
+              tls:
+                description: TLS configuration for web frontend.
+                properties:
+                  autoGenerate:
+                    description: If true, generate a self-signed CA and cert automatically.
+                    type: boolean
+                  certSecretRef:
+                    description: 'For cert mode: reference to a Secret containing
+                      tls.crt, tls.key, ca.crt'
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  mode:
+                    default: none
+                    description: 'Mode: none | psk | cert'
+                    enum:
+                    - none
+                    - psk
+                    - cert
+                    type: string
+                  pskIdentity:
+                    description: 'For psk mode: PSK identity string'
+                    type: string
+                  pskSecretRef:
+                    description: 'For psk mode: reference to a Secret containing the
+                      PSK value'
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+            required:
+            - image
+            - serverRef
+            type: object
+          status:
+            description: ZabbixWebStatus defines the observed state of ZabbixWeb.
+            properties:
+              conditions:
+                description: 'Conditions: WebReady, MaintenanceModeActive'
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixwebservices.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixWebService
+    listKind: ZabbixWebServiceList
+    plural: zabbixwebservices
+    shortNames:
+    - zwsvc
+    singular: zabbixwebservice
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='WebServiceReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ZabbixWebService is the Schema for the zabbixwebservices API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ZabbixWebServiceSpec defines the desired state of ZabbixWebService.
+            properties:
+              image:
+                description: Container image for zabbix-web-service.
+                type: string
+              port:
+                default: 10053
+                description: Port for the web service (report generation).
+                format: int32
+                type: integer
+              replicas:
+                default: 1
+                format: int32
+                type: integer
+              resources:
+                description: ResourceRequirements describes the compute resource requirements.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              serverRef:
+                description: Reference to ZabbixServer CR.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      TODO: Add other useful fields. apiVersion, kind, uid?
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              service:
+                description: Service customisation.
+                properties:
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Additional labels applied to the Service.
+                    type: object
+                  ports:
+                    description: Port overrides. If empty, operator uses sensible
+                      defaults.
+                    items:
+                      description: ServicePortSpec defines an individual port on a
+                        Service.
+                      properties:
+                        name:
+                          type: string
+                        nodePort:
+                          description: NodePort is only valid when service type is
+                            NodePort.
+                          format: int32
+                          type: integer
+                        port:
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      - port
+                      type: object
+                    type: array
+                  type:
+                    default: ClusterIP
+                    enum:
+                    - ClusterIP
+                    - NodePort
+                    - LoadBalancer
+                    type: string
+                type: object
+              tls:
+                description: TLS configuration.
+                properties:
+                  autoGenerate:
+                    description: If true, generate a self-signed CA and cert automatically.
+                    type: boolean
+                  certSecretRef:
+                    description: 'For cert mode: reference to a Secret containing
+                      tls.crt, tls.key, ca.crt'
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  mode:
+                    default: none
+                    description: 'Mode: none | psk | cert'
+                    enum:
+                    - none
+                    - psk
+                    - cert
+                    type: string
+                  pskIdentity:
+                    description: 'For psk mode: PSK identity string'
+                    type: string
+                  pskSecretRef:
+                    description: 'For psk mode: reference to a Secret containing the
+                      PSK value'
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+            required:
+            - image
+            type: object
+          status:
+            description: ZabbixWebServiceStatus defines the observed state of ZabbixWebService.
+            properties:
+              conditions:
+                description: 'Conditions: WebServiceReady'
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixjmxs.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixJMX
+    listKind: ZabbixJMXList
+    plural: zabbixjmxs
+    shortNames:
+    - zjmx
+    singular: zabbixjmx
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='JMXReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ZabbixJMX is the Schema for the zabbixjmxes API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ZabbixJMXSpec defines the desired state of ZabbixJMX.
+            properties:
+              image:
+                description: Container image for zabbix-java-gateway.
+                type: string
+              javaOptions:
+                description: Java options for the JMX gateway JVM.
+                type: string
+              port:
+                default: 10052
+                description: JMX gateway port.
+                format: int32
+                type: integer
+              replicas:
+                default: 1
+                format: int32
+                type: integer
+              resources:
+                description: ResourceRequirements describes the compute resource requirements.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              serverRef:
+                description: Reference to ZabbixServer CR.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      TODO: Add other useful fields. apiVersion, kind, uid?
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              service:
+                description: Service customisation.
+                properties:
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Additional labels applied to the Service.
+                    type: object
+                  ports:
+                    description: Port overrides. If empty, operator uses sensible
+                      defaults.
+                    items:
+                      description: ServicePortSpec defines an individual port on a
+                        Service.
+                      properties:
+                        name:
+                          type: string
+                        nodePort:
+                          description: NodePort is only valid when service type is
+                            NodePort.
+                          format: int32
+                          type: integer
+                        port:
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      - port
+                      type: object
+                    type: array
+                  type:
+                    default: ClusterIP
+                    enum:
+                    - ClusterIP
+                    - NodePort
+                    - LoadBalancer
+                    type: string
+                type: object
+            required:
+            - image
+            type: object
+          status:
+            description: ZabbixJMXStatus defines the observed state of ZabbixJMX.
+            properties:
+              conditions:
+                description: 'Conditions: JMXReady'
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixsnmptrappers.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixSNMPTrapper
+    listKind: ZabbixSNMPTrapperList
+    plural: zabbixsnmptrappers
+    shortNames:
+    - zsnmp
+    singular: zabbixsnmptrapper
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='SNMPTrapperReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ZabbixSNMPTrapper is the Schema for the zabbixsnmptrappers API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ZabbixSNMPTrapperSpec defines the desired state of ZabbixSNMPTrapper.
+            properties:
+              hostNetwork:
+                default: false
+                description: Use hostNetwork when running as DaemonSet on port 162.
+                type: boolean
+              image:
+                description: Container image for zabbix-snmptraps.
+                type: string
+              mode:
+                default: Deployment
+                description: Deploy as DaemonSet (one per node) or Deployment.
+                enum:
+                - DaemonSet
+                - Deployment
+                type: string
+              port:
+                default: 162
+                description: SNMP trap port.
+                format: int32
+                type: integer
+              replicas:
+                default: 1
+                format: int32
+                type: integer
+              resources:
+                description: ResourceRequirements describes the compute resource requirements.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              serverRef:
+                description: Reference to ZabbixServer CR.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      TODO: Add other useful fields. apiVersion, kind, uid?
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              service:
+                description: Service customisation.
+                properties:
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Additional labels applied to the Service.
+                    type: object
+                  ports:
+                    description: Port overrides. If empty, operator uses sensible
+                      defaults.
+                    items:
+                      description: ServicePortSpec defines an individual port on a
+                        Service.
+                      properties:
+                        name:
+                          type: string
+                        nodePort:
+                          description: NodePort is only valid when service type is
+                            NodePort.
+                          format: int32
+                          type: integer
+                        port:
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      - port
+                      type: object
+                    type: array
+                  type:
+                    default: ClusterIP
+                    enum:
+                    - ClusterIP
+                    - NodePort
+                    - LoadBalancer
+                    type: string
+                type: object
+              snmpTrapperFile:
+                description: SNMP trap file path for IPC with Zabbix server.
+                type: string
+            required:
+            - image
+            type: object
+          status:
+            description: ZabbixSNMPTrapperStatus defines the observed state of ZabbixSNMPTrapper.
+            properties:
+              conditions:
+                description: 'Conditions: SNMPTrapperReady'
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixproxies.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixProxy
+    listKind: ZabbixProxyList
+    plural: zabbixproxies
+    shortNames:
+    - zprx
+    singular: zabbixproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='ProxyReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ZabbixProxy is the Schema for the zabbixproxies API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ZabbixProxySpec defines the desired state of ZabbixProxy.
+            properties:
+              image:
+                description: Container image for zabbix-proxy.
+                type: string
+              mode:
+                default: active
+                description: 'Proxy mode: active proxies connect to server; passive
+                  proxies wait for server.'
+                enum:
+                - active
+                - passive
+                type: string
+              replicas:
+                default: 1
+                format: int32
+                type: integer
+              resources:
+                description: ResourceRequirements describes the compute resource requirements.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              serverRef:
+                description: Reference to ZabbixServer CR — always connects via zabbix-server-active
+                  Service.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      TODO: Add other useful fields. apiVersion, kind, uid?
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              service:
+                description: Service customisation for passive proxies that need external
+                  reachability.
+                properties:
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Additional labels applied to the Service.
+                    type: object
+                  ports:
+                    description: Port overrides. If empty, operator uses sensible
+                      defaults.
+                    items:
+                      description: ServicePortSpec defines an individual port on a
+                        Service.
+                      properties:
+                        name:
+                          type: string
+                        nodePort:
+                          description: NodePort is only valid when service type is
+                            NodePort.
+                          format: int32
+                          type: integer
+                        port:
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      - port
+                      type: object
+                    type: array
+                  type:
+                    default: ClusterIP
+                    enum:
+                    - ClusterIP
+                    - NodePort
+                    - LoadBalancer
+                    type: string
+                type: object
+              storageClass:
+                description: StorageClass for proxy local database (required for StatefulSet
+                  mode).
+                type: string
+              storageSize:
+                anyOf:
+                - type: integer
+                - type: string
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              tls:
+                description: TLS configuration.
+                properties:
+                  autoGenerate:
+                    description: If true, generate a self-signed CA and cert automatically.
+                    type: boolean
+                  certSecretRef:
+                    description: 'For cert mode: reference to a Secret containing
+                      tls.crt, tls.key, ca.crt'
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  mode:
+                    default: none
+                    description: 'Mode: none | psk | cert'
+                    enum:
+                    - none
+                    - psk
+                    - cert
+                    type: string
+                  pskIdentity:
+                    description: 'For psk mode: PSK identity string'
+                    type: string
+                  pskSecretRef:
+                    description: 'For psk mode: reference to a Secret containing the
+                      PSK value'
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+            required:
+            - image
+            - mode
+            - serverRef
+            type: object
+          status:
+            description: ZabbixProxyStatus defines the observed state of ZabbixProxy.
+            properties:
+              conditions:
+                description: 'Conditions: ProxyReady'
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: zabbixagents.zabbix.io
+spec:
+  group: zabbix.io
+  names:
+    kind: ZabbixAgent
+    listKind: ZabbixAgentList
+    plural: zabbixagents
+    shortNames:
+    - zagt
+    singular: zabbixagent
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='AgentReady')].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .spec.deploymentMode
+      name: Deploy
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ZabbixAgent is the Schema for the zabbixagents API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ZabbixAgentSpec defines the desired state of ZabbixAgent.
+            properties:
+              deploymentMode:
+                default: DaemonSet
+                description: Deploy as DaemonSet (all nodes) or Deployment (selected
+                  nodes).
+                enum:
+                - DaemonSet
+                - Deployment
+                type: string
+              image:
+                description: Container image for zabbix-agent or zabbix-agent2.
+                type: string
+              mode:
+                default: active
+                description: Agent mode.
+                enum:
+                - active
+                - passive
+                - both
+                type: string
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: Node selector for Deployment mode.
+                type: object
+              port:
+                default: 10050
+                description: Agent port.
+                format: int32
+                type: integer
+              resources:
+                description: ResourceRequirements describes the compute resource requirements.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+
+                      This is an alpha field and requires enabling the
+                      DynamicResourceAllocation feature gate.
+
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              serverRef:
+                description: Reference to ZabbixServer or ZabbixProxy CR.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      TODO: Add other useful fields. apiVersion, kind, uid?
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      TODO: Drop `kubebuilder:default` when controller-gen doesn't need it https://github.com/kubernetes-sigs/kubebuilder/issues/3896.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              service:
+                description: Service customisation for passive agents.
+                properties:
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Additional labels applied to the Service.
+                    type: object
+                  ports:
+                    description: Port overrides. If empty, operator uses sensible
+                      defaults.
+                    items:
+                      description: ServicePortSpec defines an individual port on a
+                        Service.
+                      properties:
+                        name:
+                          type: string
+                        nodePort:
+                          description: NodePort is only valid when service type is
+                            NodePort.
+                          format: int32
+                          type: integer
+                        port:
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      - port
+                      type: object
+                    type: array
+                  type:
+                    default: ClusterIP
+                    enum:
+                    - ClusterIP
+                    - NodePort
+                    - LoadBalancer
+                    type: string
+                type: object
+              tls:
+                description: TLS configuration.
+                properties:
+                  autoGenerate:
+                    description: If true, generate a self-signed CA and cert automatically.
+                    type: boolean
+                  certSecretRef:
+                    description: 'For cert mode: reference to a Secret containing
+                      tls.crt, tls.key, ca.crt'
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  mode:
+                    default: none
+                    description: 'Mode: none | psk | cert'
+                    enum:
+                    - none
+                    - psk
+                    - cert
+                    type: string
+                  pskIdentity:
+                    description: 'For psk mode: PSK identity string'
+                    type: string
+                  pskSecretRef:
+                    description: 'For psk mode: reference to a Secret containing the
+                      PSK value'
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+              tolerations:
+                description: Tolerations for DaemonSet mode (e.g. control-plane tolerations).
+                items:
+                  description: |-
+                    The pod this Toleration is attached to tolerates any taint that matches
+                    the triple <key,value,effect> using the matching operator <operator>.
+                  properties:
+                    effect:
+                      description: |-
+                        Effect indicates the taint effect to match. Empty means match all taint effects.
+                        When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                      type: string
+                    key:
+                      description: |-
+                        Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                        If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                      type: string
+                    operator:
+                      description: |-
+                        Operator represents a key's relationship to the value.
+                        Valid operators are Exists and Equal. Defaults to Equal.
+                        Exists is equivalent to wildcard for value, so that a pod can
+                        tolerate all taints of a particular category.
+                      type: string
+                    tolerationSeconds:
+                      description: |-
+                        TolerationSeconds represents the period of time the toleration (which must be
+                        of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                        it is not set, which means tolerate the taint forever (do not evict). Zero and
+                        negative values will be treated as 0 (evict immediately) by the system.
+                      format: int64
+                      type: integer
+                    value:
+                      description: |-
+                        Value is the taint value the toleration matches to.
+                        If the operator is Exists, the value should be empty, otherwise just a regular string.
+                      type: string
+                  type: object
+                type: array
+              useAgent2:
+                default: false
+                description: Use Zabbix Agent 2 (supports plugins).
+                type: boolean
+            required:
+            - deploymentMode
+            - image
+            - mode
+            - serverRef
+            type: object
+          status:
+            description: ZabbixAgentStatus defines the observed state of ZabbixAgent.
+            properties:
+              conditions:
+                description: 'Conditions: AgentReady'
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource.\n---\nThis struct is intended for
+                    direct use as an array at the field path .status.conditions.  For
+                    example,\n\n\n\ttype FooStatus struct{\n\t    // Represents the
+                    observations of a foo's current state.\n\t    // Known .status.conditions.type
+                    are: \"Available\", \"Progressing\", and \"Degraded\"\n\t    //
+                    +patchMergeKey=type\n\t    // +patchStrategy=merge\n\t    // +listType=map\n\t
+                    \   // +listMapKey=type\n\t    Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                    patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`\n\n\n\t
+                    \   // other fields\n\t}"
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: |-
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
+                        ---
+                        Many .condition.type values are consistent across resources like Available, but because arbitrary conditions can be
+                        useful (see .node.status.conditions), the ability to deconflict is important.
+                        The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration mirrors metadata.generation.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

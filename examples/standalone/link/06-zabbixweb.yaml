@@ -1,0 +1,39 @@
+---
+# ZabbixWeb — Standalone (Link Mode)
+#
+# Pre-created independently. ZabbixSuite references it via
+# spec.web.existingRef.name = "my-zabbix-web".
+#
+# The operator updates spec.serverRef to point to the correct ZabbixServer.
+# All other fields remain untouched by ZabbixSuite.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixWeb
+metadata:
+  name: my-zabbix-web
+  namespace: zabbix-dev
+  labels:
+    app.kubernetes.io/name: zabbix-web
+    app.kubernetes.io/instance: my-zabbix
+    team: app-team
+
+spec:
+  image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"
+  replicas: 1
+
+  # Injected by ZabbixSuite when referenced in link mode.
+  serverRef:
+    name: my-zabbix-server
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  ingress:
+    enabled: false
+
+  service:
+    type: ClusterIP

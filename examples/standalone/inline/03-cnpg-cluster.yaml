@@ -1,0 +1,41 @@
+---
+# CloudNativePG Cluster — minimal single-instance for development.
+#
+# Single replica: no HA, no streaming replication.
+# Suitable for dev/lab where data loss on node failure is acceptable.
+#
+# For production: see examples/production-ha/inline/02-cnpg-cluster.yaml
+#                 (3 instances, PgBouncer pooler, backup schedule)
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: zabbix-pg
+  namespace: zabbix-dev
+spec:
+  instances: 1
+
+  # PostgreSQL version — must match Zabbix server's pg_catalog expectations.
+  # Zabbix 7.x supports PostgreSQL 13–16.
+  imageName: "ghcr.io/cloudnative-pg/postgresql:16"
+
+  # Bootstrap: create the "zabbix" database and load credentials from Secret.
+  bootstrap:
+    initdb:
+      database: zabbix
+      owner: zabbix
+      secret:
+        name: zabbix-db-creds   # Secret with keys: username, password
+
+  # Storage: single PVC for data. EmptyDir is NOT supported for CNPG.
+  storage:
+    size: 10Gi
+    # storageClass: standard   # uncomment to override default StorageClass
+
+  # PostgreSQL configuration tuning.
+  # These defaults are suitable for dev (small memory, relaxed checkpointing).
+  postgresql:
+    parameters:
+      max_connections: "100"
+      shared_buffers: "128MB"
+      wal_level: "replica"
+      archive_mode: "off"     # disable WAL archiving in dev (no backup)

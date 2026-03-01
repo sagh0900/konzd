@@ -1,0 +1,10 @@
+---
+# Namespace for standalone / development deployments.
+# Separate namespace from production to avoid RBAC overlap.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zabbix-dev
+  labels:
+    app.kubernetes.io/managed-by: zabbix-operator
+    environment: development

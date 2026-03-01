@@ -1,0 +1,54 @@
+---
+# ZabbixWebService — Production HA / Decentralized
+#
+# DECENTRALIZED OWNERSHIP: Frontend Team owns this CR alongside ZabbixWeb.
+# ZabbixSuite references it via spec.webService.existingRef.name = "my-zabbix-webservice".
+#
+# The ZabbixWebService renders scheduled PDF/PNG reports requested by the Zabbix
+# server's report manager (uses headless Chromium internally).
+#
+# WIRING: ZabbixSuite injects the webservice URL into the ZabbixServer via:
+#   annotation: zabbix.io/webservice-url: "http://my-zabbix-webservice.zabbix-suite.svc.cluster.local:10053/report"
+# This sets ZBX_WEBSERVICEURL on the server pod automatically.
+#
+# STANDALONE WIRING (without ZabbixSuite): annotate ZabbixServer manually:
+#   kubectl annotate zabbixserver my-zabbix-server \
+#     zabbix.io/webservice-url="http://my-zabbix-webservice.zabbix-suite.svc.cluster.local:10053/report"
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixWebService
+metadata:
+  name: my-zabbix-webservice
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-webservice
+    app.kubernetes.io/instance: my-zabbix
+    app.kubernetes.io/component: webservice
+    team: frontend-team
+
+spec:
+  image: "zabbix/zabbix-web-service:ubuntu-7.4-latest"
+
+  # 2 replicas: parallel report rendering for concurrent scheduled reports.
+  replicas: 2
+
+  # Injected by ZabbixSuite in link mode.
+  serverRef:
+    name: my-zabbix-server
+
+  port: 10053
+
+  # Resources: report rendering uses headless Chromium — CPU and memory spikes on render.
+  # Tune based on report concurrency and complexity (page count, graphs).
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+
+  # Internal ClusterIP only: the web-service is called by the Zabbix server, not external users.
+  service:
+    type: ClusterIP
+    labels:
+      monitoring.example.com/component: "zabbix-webservice"

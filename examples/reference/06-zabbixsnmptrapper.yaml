@@ -1,0 +1,108 @@
+# ZabbixSNMPTrapper — Standalone Manifest (Full Reference)
+#
+# PURPOSE
+#   A ZabbixSNMPTrapper CR deploys snmptrapd + the Zabbix SNMP trap handler.
+#   It receives SNMP v1/v2c/v3 trap PDUs on UDP/162, converts them to Zabbix
+#   trap events, and writes them to a shared trap file. The Zabbix server's
+#   SNMPtrapper process (or a sidecar) reads the file and ingests events.
+#
+# DEPLOYMENT MODES
+#   Deployment (default) — standard replicated Deployment.
+#     Advantages: rolling updates, horizontal scaling.
+#     Disadvantage: SNMP traps are sent to individual pod IPs; you need a
+#     LoadBalancer Service on UDP/162 or ExternalIPs to receive from network devices.
+#
+#   DaemonSet — one pod per node, using host network.
+#     Advantages: receives traps on node's physical UDP/162 without NAT; works with
+#     any standard syslog/SNMP forwarding chain.
+#     Set mode: DaemonSet and hostNetwork: true.
+#     Requires privileged ports or sysctl net.ipv4.ip_unprivileged_port_start=0.
+#
+# DEPENDENCIES
+#   - ZabbixServer CR must exist.
+#   - snmptrapd configuration can be injected via a ConfigMap mounted into the container.
+#
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSNMPTrapper
+metadata:
+  name: my-zabbix-snmptrapper
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-snmptrapper
+    app.kubernetes.io/instance: my-zabbix
+
+spec:
+  # ── Container image ────────────────────────────────────────────────────────
+  image: "zabbix/zabbix-snmptraps:ubuntu-7.4-latest"
+
+  # ── ZabbixServer reference ─────────────────────────────────────────────────
+  serverRef:
+    name: my-zabbix-server
+
+  # ── Listen port ────────────────────────────────────────────────────────────
+  # Default: 162 (standard SNMP trap port).
+  # Use a high port (e.g. 1162) in Deployment mode when not using hostNetwork
+  # to avoid requiring privileged port binding.
+  port: 162
+
+  # ── Deployment mode ────────────────────────────────────────────────────────
+  # Deployment — replicated; use with LoadBalancer Service for external SNMP sources.
+  # DaemonSet  — one pod per node; best for host-level SNMP trap reception.
+  mode: Deployment   # Deployment | DaemonSet
+
+  # ── Host network ───────────────────────────────────────────────────────────
+  # Required when mode=DaemonSet and port=162 (privileged port on host network stack).
+  # Set false in Deployment mode — pod IP is used; external LoadBalancer routes traffic.
+  hostNetwork: false
+
+  # ── Replica count ──────────────────────────────────────────────────────────
+  # Applies only when mode=Deployment.
+  # For DaemonSet, replicas is ignored (one pod per matching node).
+  replicas: 2
+
+  # ── SNMP trap file path ────────────────────────────────────────────────────
+  # snmptrapd writes received traps here; the Zabbix server reads from the same path.
+  # This must match the ZBX_SNMPTRAPPERFILE env var on the Zabbix server pod.
+  # Leave empty to use the Zabbix server's default (/var/lib/zabbix/snmptraps/snmptraps.log).
+  # snmpTrapperFile: "/var/lib/zabbix/snmptraps/snmptraps.log"
+
+  # ── Compute resources ──────────────────────────────────────────────────────
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+
+  # ── Service customisation ──────────────────────────────────────────────────
+  service:
+    type: ClusterIP
+    # For Deployment mode + external SNMP sources, use LoadBalancer:
+    # type: LoadBalancer
+    labels:
+      monitoring.example.com/component: "zabbix-snmptrapper"
+
+---
+# ── DaemonSet mode example (for reference — uncomment and adjust if needed) ──
+#
+# apiVersion: zabbix.io/v1alpha1
+# kind: ZabbixSNMPTrapper
+# metadata:
+#   name: my-zabbix-snmptrapper-ds
+#   namespace: zabbix-suite
+# spec:
+#   image: "zabbix/zabbix-snmptraps:ubuntu-7.4-latest"
+#   serverRef:
+#     name: my-zabbix-server
+#   port: 162
+#   mode: DaemonSet
+#   hostNetwork: true        # Bind to host UDP/162 directly
+#   resources:
+#     requests:
+#       cpu: "50m"
+#       memory: "64Mi"
+#     limits:
+#       cpu: "200m"
+#       memory: "128Mi"

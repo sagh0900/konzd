@@ -1,0 +1,90 @@
+---
+# ════════════════════════════════════════════════════════════════════════════
+# ConfigMaps for Production HA deployment
+#
+# ConfigMaps are used to inject tuning parameters into ZabbixServer via
+# spec.extraEnv.configMapKeyRef without embedding values directly in the CR.
+# This enables GitOps workflows where tuning values are managed separately
+# from the operator CR lifecycle (e.g. different PR reviewers, different RBAC).
+# ════════════════════════════════════════════════════════════════════════════
+
+---
+# Zabbix server performance tuning parameters.
+# These values are injected into the zabbix-server container via extraEnv.configMapKeyRef.
+# Protected keys (ZBX_DB_*, ZBX_HANODENAME, ZBX_NODEADDRESS) are always operator-owned
+# and cannot be overridden here.
+#
+# See full parameter reference:
+#   https://hub.docker.com/r/zabbix/zabbix-server-pgsql (Environment Variables section)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zabbix-server-tuning
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-server
+    app.kubernetes.io/component: tuning
+  annotations:
+    # Document the baseline this tuning is designed for.
+    tuning.zabbix.io/hosts: "500"
+    tuning.zabbix.io/items-per-host: "200"
+    tuning.zabbix.io/checks-per-second: "1000"
+data:
+  # ── Poller / process counts ─────────────────────────────────────────────
+  # Scale pollers proportional to expected check throughput.
+  # Formula: StartPollers ≈ (checks_per_sec × avg_check_duration_sec) / 0.8
+  start_pollers: "10"
+  start_pollers_unreachable: "2"
+  start_ipmi_pollers: "0"        # 0 = IPMI disabled (no IPMI hardware)
+  start_http_pollers: "5"        # HTTP agent checks
+  start_discoverers: "3"         # Network discovery workers
+  start_escalators: "2"          # Alert escalation workers
+  start_preprocessors: "8"       # Value preprocessing (high throughput)
+  start_trappers: "8"            # Passive-agent / SNMP trap receivers
+  start_alerters: "5"            # Notification workers (email, Slack, etc.)
+  start_lld_processors: "3"      # Low-Level Discovery workers
+  start_history_pollers: "5"     # History write workers (7.x feature)
+
+  # ── Cache sizes ─────────────────────────────────────────────────────────
+  # Tune based on: hosts × items × avg_item_size
+  # Rule of thumb for 500 hosts × 200 items: 64M cache, 128M history cache
+  cache_size: "64M"              # Host/item/trigger shared memory cache
+  history_cache_size: "128M"     # History write buffer (flush to DB every 1s)
+  history_index_cache_size: "32M" # Index for history cache lookup
+  trend_cache_size: "32M"        # Trend data aggregation buffer
+  value_cache_size: "128M"       # History query value cache (for graphs/dashboards)
+
+  # ── Timers and intervals ─────────────────────────────────────────────────
+  housekeeping_frequency: "1"    # Hours between housekeeping runs (default: 1)
+  max_housekeeper_delete: "50000" # Max rows deleted per housekeeping cycle
+
+  # ── Logging ─────────────────────────────────────────────────────────────
+  log_slow_queries: "3000"       # Log DB queries slower than N milliseconds (0=off)
+  log_level: "3"                 # 1=critical, 2=error, 3=warning, 4=info, 5=debug
+
+  # ── SMTP notification settings ───────────────────────────────────────────
+  smtp_server: "smtp.example.com"
+  smtp_server_port: "587"
+  smtp_hello: "zabbix.example.com"
+  smtp_email: "zabbix-alerts@example.com"
+  smtp_security: "STARTTLS"
+
+---
+# Zabbix web UI additional configuration.
+# Injected into ZabbixWeb via similar extraEnv patterns (if the web CR supports it).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zabbix-web-config
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-web
+    app.kubernetes.io/component: config
+data:
+  # Maximum number of concurrent users (for PHP session / memory sizing)
+  php_max_execution_time: "300"
+  php_memory_limit: "256M"
+  # Web UI timezone (must match Zabbix server timezone)
+  tz: "Europe/Stockholm"
+  # Zabbix API access (used by external tools like Grafana Zabbix plugin)
+  api_url: "http://my-zabbix-server-active:10051"

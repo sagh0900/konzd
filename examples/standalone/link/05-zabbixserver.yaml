@@ -1,0 +1,62 @@
+---
+# ZabbixServer — Standalone (Link Mode)
+#
+# Pre-created before the ZabbixSuite CR. The ZabbixSuite references this by name
+# via spec.server.existingRef.name = "my-zabbix-server".
+#
+# IMPORTANT: In link mode, ZabbixSuite only updates spec.databaseRef on this CR
+# to point to the correct ZabbixDatabase. All other fields are untouched.
+#
+# OWNERSHIP: App team owns this CR.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixServer
+metadata:
+  name: my-zabbix-server
+  namespace: zabbix-dev
+  labels:
+    app.kubernetes.io/name: zabbix-server
+    app.kubernetes.io/instance: my-zabbix
+    team: app-team
+
+spec:
+  image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+  replicas: 1
+  version: "7.4.0"
+
+  # The operator injects this automatically when referenced by ZabbixSuite.
+  # Can also be set explicitly to "lock" the database reference.
+  databaseRef:
+    name: my-zabbix-db
+
+  leaseDuration: "20s"
+  renewDeadline: "15s"
+  retryPeriod: "3s"
+
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+  tls:
+    mode: "none"
+
+  service:
+    type: ClusterIP
+
+  operatorImages:
+    supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+    migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+
+  extraEnv:
+    - name: ZBX_STARTPOLLERS
+      value: "3"
+    - name: ZBX_CACHESIZE
+      value: "8M"
+
+  upgradePolicy:
+    allowMajorUpgrade: false
+    requireManualApproval: false

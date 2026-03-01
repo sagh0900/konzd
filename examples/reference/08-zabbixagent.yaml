@@ -1,0 +1,146 @@
+# ZabbixAgent — Standalone Manifest (Full Reference)
+#
+# PURPOSE
+#   A ZabbixAgent CR deploys Zabbix Agent 1 or Agent 2 as a DaemonSet or Deployment
+#   to collect host-level metrics (CPU, memory, disk, network, processes, log files).
+#
+# AGENT VERSIONS
+#   Agent 1 (default) — lightweight C agent; supports all standard Zabbix item types.
+#   Agent 2           — modern Go-based agent with plugin support (Prometheus, Docker,
+#                       PostgreSQL, MongoDB, etc.). Set useAgent2: true.
+#
+# DEPLOYMENT MODES
+#   DaemonSet (default) — one agent pod per node. Ideal for node-level monitoring.
+#     Access to host metrics via hostPID/hostNetwork or volume mounts.
+#     Tolerations allow scheduling on tainted nodes (control-plane, etc.).
+#
+#   Deployment — fixed replica count. Use when monitoring specific application pods
+#     or when DaemonSet is not desired (e.g. spot-instance pools with frequent scaling).
+#
+# AGENT MODES
+#   active  — agent connects to the server/proxy to receive item list and send data.
+#             No inbound port needed; only outbound TCP/10051 required.
+#   passive — server/proxy connects to agent on port 10050 to request checks.
+#             A Service must expose the agent port.
+#   both    — supports both active and passive checks simultaneously.
+#
+# DEPENDENCIES
+#   - ZabbixServer or ZabbixProxy CR must exist (spec.serverRef.name).
+#   - For passive/both: a Service is created exposing port 10050.
+#   - Register hosts in Zabbix Administration → Hosts pointing to agent Service/pod IP.
+#
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixAgent
+metadata:
+  name: my-zabbix-agent
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-agent
+    app.kubernetes.io/instance: my-zabbix
+
+spec:
+  # ── Container image ────────────────────────────────────────────────────────
+  # Agent 1:  "zabbix/zabbix-agent:ubuntu-7.4-latest"
+  # Agent 2:  "zabbix/zabbix-agent2:ubuntu-7.4-latest"
+  image: "zabbix/zabbix-agent:ubuntu-7.4-latest"
+
+  # ── Use Agent 2 ────────────────────────────────────────────────────────────
+  # Set true when using the Agent 2 image. Activates plugin configuration.
+  useAgent2: false
+
+  # ── Deployment mode ────────────────────────────────────────────────────────
+  # DaemonSet  — one pod per node (best for node-level monitoring)
+  # Deployment — fixed replica count (useful for application-specific agents)
+  deploymentMode: DaemonSet
+
+  # ── Agent check mode ───────────────────────────────────────────────────────
+  # active  — agent initiates connection to server (no inbound port needed)
+  # passive — server connects to agent (Service created on port 10050)
+  # both    — supports active and passive simultaneously
+  mode: active  # agent connects outbound to server/proxy; no inbound port needed
+
+  # ── ZabbixServer or ZabbixProxy reference ─────────────────────────────────
+  # Point to ZabbixServer for direct server connection, or ZabbixProxy for proxied.
+  serverRef:
+    name: my-zabbix-server
+
+  # ── Listen port ────────────────────────────────────────────────────────────
+  # Default: 10050. Used for passive and both modes.
+  port: 10050
+
+  # ── Compute resources ──────────────────────────────────────────────────────
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+
+  # ── TLS configuration ──────────────────────────────────────────────────────
+  tls:
+    mode: "none"   # none | psk | cert
+    # PSK example:
+    # mode: "psk"
+    # pskIdentity: "agent-psk"
+    # pskSecretRef:
+    #   name: zabbix-agent-psk-secret
+    #   key: psk
+
+  # ── Node selector (Deployment mode) ───────────────────────────────────────
+  # Schedule agents only on specific node groups.
+  # nodeSelector:
+  #   kubernetes.io/os: linux
+  #   node-role.kubernetes.io/worker: ""
+
+  # ── Tolerations (DaemonSet mode) ──────────────────────────────────────────
+  # Allow scheduling on tainted nodes (control-plane, GPU nodes, spot instances).
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node.kubernetes.io/not-ready
+      operator: Exists
+      effect: NoSchedule
+    # - key: dedicated
+    #   operator: Equal
+    #   value: monitoring
+    #   effect: NoSchedule
+
+  # ── Service (passive/both modes only) ─────────────────────────────────────
+  # Created automatically when mode is "passive" or "both".
+  # In active-only mode no Service is needed — agents connect outbound.
+  # service:
+  #   type: ClusterIP
+  #   labels:
+  #     monitoring.example.com/component: "zabbix-agent"
+
+---
+# ── Deployment mode example (for fixed-count agents) ──────────────────────
+# (uncomment and adjust if needed)
+#
+# apiVersion: zabbix.io/v1alpha1
+# kind: ZabbixAgent
+# metadata:
+#   name: my-zabbix-agent-passive
+#   namespace: zabbix-suite
+# spec:
+#   image: "zabbix/zabbix-agent2:ubuntu-7.4-latest"
+#   useAgent2: true
+#   deploymentMode: Deployment
+#   mode: both          # Support both active polling and passive checks
+#   serverRef:
+#     name: my-zabbix-server
+#   port: 10050
+#   resources:
+#     requests:
+#       cpu: "50m"
+#       memory: "128Mi"   # Agent 2 has higher baseline memory
+#     limits:
+#       cpu: "200m"
+#       memory: "256Mi"
+#   nodeSelector:
+#     dedicated: monitoring
+#   service:
+#     type: ClusterIP

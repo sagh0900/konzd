@@ -1,0 +1,260 @@
+# ZabbixSuite — Linked Mode (Full Reference)
+#
+# ════════════════════════════════════════════════════════════════════════════
+# WHAT IS LINK MODE vs INLINE MODE?
+# ════════════════════════════════════════════════════════════════════════════
+#
+# ZabbixSuite supports two ways to manage each optional component:
+#
+#  ┌─────────────────────────────────────────────────────────────────────────┐
+#  │ INLINE MODE (default — used in deploy/06-zabbixsuite-ha.yaml)           │
+#  │                                                                         │
+#  │ You provide the component spec INSIDE the ZabbixSuite.                  │
+#  │ The operator creates and fully manages the child CR.                    │
+#  │ The child CR's spec is overwritten on every reconcile.                  │
+#  │                                                                         │
+#  │   web:                                                                  │
+#  │     enabled: true           ← enables the component                     │
+#  │     spec:                                                               │
+#  │       image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"         │
+#  │       replicas: 2                                                       │
+#  │       ingress: { enabled: true, host: "zabbix.example.com" }           │
+#  └─────────────────────────────────────────────────────────────────────────┘
+#
+#  ┌─────────────────────────────────────────────────────────────────────────┐
+#  │ LINK MODE (this file demonstrates)                                      │
+#  │                                                                         │
+#  │ You create the child CR INDEPENDENTLY first (files 01-08 in this dir).  │
+#  │ Then reference it in ZabbixSuite by name.                               │
+#  │ The operator ONLY updates the child's serverRef (or databaseRef) to     │
+#  │ ensure correct wiring. All other spec fields are left untouched.        │
+#  │ The child CR has its own independent lifecycle.                         │
+#  │                                                                         │
+#  │   web:                                                                  │
+#  │     enabled: true           ← enables the component                     │
+#  │     name: my-zabbix-web     ← link to the pre-created ZabbixWeb CR      │
+#  └─────────────────────────────────────────────────────────────────────────┘
+#
+# WHY USE LINK MODE?
+#   1. GitOps separation: each component CR lives in its own file/repo.
+#   2. Independent upgrades: update a component without touching ZabbixSuite.
+#   3. Shared components: a single ZabbixProxy can be referenced by multiple
+#      ZabbixSuites (different namespaces / environments).
+#   4. Fine-grained RBAC: different teams own different component CRs.
+#   5. Staged rollout: enable: false lets you park a spec without deploying.
+#
+# ════════════════════════════════════════════════════════════════════════════
+# DEPLOYMENT FLOW FOR THIS MANIFEST
+# ════════════════════════════════════════════════════════════════════════════
+#
+#   1. Apply the CNPG cluster and pooler (deploy/04-cnpg-ha-cluster.yaml,
+#      deploy/05-cnpg-pooler.yaml) if not already running.
+#
+#   2. Apply the standalone component manifests IN ORDER:
+#        kubectl apply -f deploy/ind-manifests/01-zabbixdatabase.yaml
+#        kubectl apply -f deploy/ind-manifests/02-zabbixserver.yaml
+#        kubectl apply -f deploy/ind-manifests/03-zabbixweb.yaml
+#        kubectl apply -f deploy/ind-manifests/04-zabbixwebservice.yaml
+#        kubectl apply -f deploy/ind-manifests/05-zabbixjmx.yaml
+#        kubectl apply -f deploy/ind-manifests/06-zabbixsnmptrapper.yaml
+#        kubectl apply -f deploy/ind-manifests/07-zabbixproxy.yaml
+#        kubectl apply -f deploy/ind-manifests/08-zabbixagent.yaml
+#
+#   3. Apply THIS file:
+#        kubectl apply -f deploy/ind-manifests/09-zabbixsuite-linked.yaml
+#
+#   The ZabbixSuite will:
+#     - Create its own ZabbixDatabase (always operator-managed, based on cnpg: section)
+#     - Link to the pre-created ZabbixServer (updates only its databaseRef if needed)
+#     - Link to pre-created Web/WebService/JMX/SNMPTrapper (updates only serverRef)
+#     - Adopt Proxy/Agent CRs as ExistingRef (reads status, never modifies spec)
+#     - Report aggregate health in ZabbixSuite.status
+#
+# NOTE on ZabbixDatabase in link mode:
+#   ZabbixDatabase is ALWAYS created and managed by ZabbixSuite (there is no link mode
+#   for the database). The suite creates "<suite-name>-db" from the cnpg: section.
+#   The pre-created standalone my-zabbix-db (file 01) is a SEPARATE CR; both can
+#   coexist in the same namespace — they just reference the same CNPG cluster.
+#   In pure standalone (no ZabbixSuite), use my-zabbix-db and reference it in
+#   my-zabbix-server.spec.databaseRef.name: my-zabbix-db.
+#
+---
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSuite
+metadata:
+  name: my-zabbix                   # Suite name; child CRs auto-named "<suite>-<component>"
+  namespace: zabbix-suite           #             unless overridden via name: field
+  labels:
+    app.kubernetes.io/name: zabbix-suite
+    app.kubernetes.io/instance: my-zabbix
+
+spec:
+  # ── Target Zabbix version ──────────────────────────────────────────────────
+  # Propagated to the ZabbixServer child CR; drives the upgrade state machine.
+  version: "7.4.0"
+
+  # ── Storage reclaim policy ─────────────────────────────────────────────────
+  # Retain (default) — removes ownerReferences on ZabbixDatabase/CNPG/PVCs so they
+  #   survive suite deletion. Safe for production.
+  # Delete — cascades deletion to all owned resources.
+  storageReclaimPolicy: Retain
+
+  # ── CNPG database backend ──────────────────────────────────────────────────
+  # ZabbixDatabase is always created by the suite (no link mode for database).
+  # The suite creates "my-zabbix-db" (= <suite-name>-db) from these refs.
+  cnpg:
+    clusterRef:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      name: zabbix-pg
+      namespace: zabbix-suite
+    poolerRef:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Pooler
+      name: zabbix-pg-pooler-rw
+      namespace: zabbix-suite
+    directServiceName: zabbix-pg-rw
+    trustWindow: "1h"
+
+  # ── ZabbixServer — LINK MODE ───────────────────────────────────────────────
+  # Links to the pre-created ZabbixServer CR (file 02-zabbixserver.yaml).
+  # The operator will only update serverRef.databaseRef to point to the
+  # suite's database ("my-zabbix-db") if it has changed. All other spec
+  # fields are left exactly as defined in the standalone CR.
+  server:
+    enabled: true                  # ← explicit enable (nil/omitted also means enabled)
+    name: my-zabbix-server         # ← LINK: references the standalone ZabbixServer CR
+
+  # ── ZabbixWeb — LINK MODE ──────────────────────────────────────────────────
+  # Links to the pre-created ZabbixWeb CR (file 03-zabbixweb.yaml).
+  # The operator updates only the child's serverRef.name to "my-zabbix-server".
+  web:
+    enabled: true
+    name: my-zabbix-web            # ← LINK: references the standalone ZabbixWeb CR
+
+  # ── ZabbixWebService — LINK MODE ──────────────────────────────────────────
+  webService:
+    enabled: true
+    name: my-zabbix-webservice     # ← LINK: references the standalone ZabbixWebService CR
+
+  # ── ZabbixJMX — LINK MODE ─────────────────────────────────────────────────
+  jmx:
+    enabled: true
+    name: my-zabbix-jmx            # ← LINK: references the standalone ZabbixJMX CR
+
+  # ── ZabbixSNMPTrapper — LINK MODE ─────────────────────────────────────────
+  snmpTrapper:
+    enabled: true
+    name: my-zabbix-snmptrapper    # ← LINK: references the standalone ZabbixSNMPTrapper CR
+
+  # ── ZabbixProxy — ExistingRef mode ────────────────────────────────────────
+  # existingRef: true means the operator reads the proxy's status for health reporting
+  # but does NOT reconcile its spec. The standalone CR (file 07) is the source of truth.
+  proxies:
+    - name: my-zabbix-proxy-eu     # Must match the name of the standalone ZabbixProxy CR
+      existingRef: true            # ← operator skips spec reconcile; standalone CR owns it
+
+  # ── ZabbixAgent — ExistingRef mode ────────────────────────────────────────
+  agents:
+    - name: my-zabbix-agent        # Must match the name of the standalone ZabbixAgent CR
+      existingRef: true            # ← operator skips spec reconcile; standalone CR owns it
+
+  # ── Suite-level upgrade policy ─────────────────────────────────────────────
+  # Propagated to the linked ZabbixServer (if server is in link mode, only applied
+  # if the server has no upgradePolicy set, to avoid overwriting standalone config).
+  upgradePolicy:
+    allowMajorUpgrade: false
+    requireManualApproval: false
+    manualApprovalGranted: false
+    cnpgBackupRequired: false
+
+  # ── Suite-level operator image overrides ──────────────────────────────────
+  # Propagated to ZabbixServer as defaults (overridden if server spec sets its own).
+  operatorImages:
+    supervisorImage:         "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+    leaseSidecarImage:       "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+    migrationSentinelImage:  "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+
+# ════════════════════════════════════════════════════════════════════════════
+# STAGED ROLLOUT EXAMPLE
+# ════════════════════════════════════════════════════════════════════════════
+# You can pre-define optional component configs in the suite but disable them
+# until you're ready to deploy. Toggle enabled: false → true when ready:
+#
+#   snmpTrapper:
+#     enabled: false              ← spec is defined but not deployed yet
+#     name: my-zabbix-snmptrapper
+#
+# ════════════════════════════════════════════════════════════════════════════
+# EXTRA ENV VARS — process tuning (v2.6+)
+# ════════════════════════════════════════════════════════════════════════════
+# ZabbixServer supports an `extraEnv` field (equivalent to Helm values-file
+# tuning) for injecting arbitrary additional env vars into the zabbix-server
+# container. Protected operator keys (ZBX_DB_*, ZBX_HANODENAME, etc.) are
+# always retained; all other keys are accepted.
+#
+# In LINK MODE the extraEnv lives on the standalone ZabbixServer CR (file 02).
+# In INLINE MODE set it inside server.spec in the ZabbixSuite manifest.
+#
+# Inline example (tuned for a medium workload):
+#
+#   server:
+#     enabled: true
+#     spec:
+#       image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+#       replicas: 2
+#       extraEnv:
+#         - name: ZBX_STARTPOLLERS
+#           value: "10"
+#         - name: ZBX_STARTPOLLERSUNREACHABLE
+#           value: "2"
+#         - name: ZBX_STARTHTTPPOLLERS
+#           value: "2"
+#         - name: ZBX_STARTDISCOVERERS
+#           value: "2"
+#         - name: ZBX_STARTPREPROCESSORS
+#           value: "5"
+#         - name: ZBX_STARTTRAPPERS
+#           value: "5"
+#         - name: ZBX_STARTALERTERS
+#           value: "3"
+#         - name: ZBX_CACHESIZE
+#           value: "32M"
+#         - name: ZBX_HISTORYCACHESIZE
+#           value: "64M"
+#         - name: ZBX_HISTORYINDEXCACHESIZE
+#           value: "16M"
+#         - name: ZBX_TRENDCACHESIZE
+#           value: "16M"
+#         - name: ZBX_VALUECACHESIZE
+#           value: "64M"
+#         - name: ZBX_MAXHOUSEKEEPERDELETE
+#           value: "50000"
+#         # Load a value from a Secret (e.g. SMTP password):
+#         # - name: ZBX_SMTPPASSWORD
+#         #   valueFrom:
+#         #     secretKeyRef:
+#         #       name: zabbix-smtp-creds
+#         #       key: password
+#
+# ════════════════════════════════════════════════════════════════════════════
+# MIXING LINK AND INLINE IN THE SAME SUITE
+# ════════════════════════════════════════════════════════════════════════════
+# You can mix modes freely. Example: server inline (suite manages it),
+# but web in link mode (externally managed with custom config):
+#
+#   server:
+#     enabled: true
+#     spec:
+#       image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+#       replicas: 2
+#       leaseDuration: "20s"
+#       extraEnv:
+#         - name: ZBX_STARTPOLLERS
+#           value: "10"
+#         - name: ZBX_CACHESIZE
+#           value: "32M"
+#
+#   web:
+#     enabled: true
+#     name: my-custom-web         ← externally managed ZabbixWeb

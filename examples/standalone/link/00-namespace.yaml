@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zabbix-dev
+  labels:
+    app.kubernetes.io/managed-by: zabbix-operator
+    environment: development

@@ -1,0 +1,73 @@
+---
+# ZabbixDatabase — Production HA / Decentralized
+#
+# DECENTRALIZED OWNERSHIP MODEL:
+#   The Database Team owns and manages this CR.
+#   The App Team's ZabbixSuite references it by name (existingRef).
+#   The operator ONLY reads this CR's status — it never modifies its spec.
+#
+# This separation enables:
+#   - Independent lifecycle management (DB team upgrades CNPG separately)
+#   - Independent RBAC (DB team writes this CR; app team cannot)
+#   - Reuse: one ZabbixDatabase can be referenced by multiple ZabbixSuites
+#
+# STATUS CONDITIONS SET BY THE OPERATOR:
+#   DatabaseReady    — aggregate: all sub-conditions True
+#   ClusterReady     — CNPG Cluster readyInstances >= 1
+#   PoolerReady      — CNPG Pooler has running instances
+#   DatabaseCreated  — DB bootstrap complete (inferred from ClusterReady)
+#   CredentialsReady — credential Secret exists with required keys
+#   SchemaReady      — schema migration completed (set by ZabbixServer after first migration)
+#   StatusFresh      — CNPG status updated within trustWindow (informational only)
+#   DatabaseFlapping — CNPG primary changed too frequently (blocks upgrades)
+#   QuorumLost       — fewer than majority of CNPG instances ready (critical)
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixDatabase
+metadata:
+  name: my-zabbix-db
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-database
+    app.kubernetes.io/instance: my-zabbix
+    app.kubernetes.io/component: database
+    team: database-team
+  annotations:
+    team.example.com/owner: "database-team@example.com"
+    team.example.com/oncall: "db-oncall@example.com"
+
+spec:
+  clusterRef:
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Cluster
+    name: zabbix-pg
+    namespace: zabbix-suite
+
+  poolerRef:
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Pooler
+    name: zabbix-pg-pooler-rw
+    namespace: zabbix-suite
+
+  directServiceRef: zabbix-pg-rw
+
+  # Explicit credentials (decentralized best practice: be explicit; avoid auto-discovery
+  # depending on CNPG internal naming conventions that may change across CNPG versions).
+  credentialsRef:
+    secretName: zabbix-db-creds
+    usernameKey: username
+    passwordKey: password
+    database: zabbix
+
+  # DB TLS: full verification — same as inline HA example.
+  dbTLS:
+    mode: verify-full
+    caSecretRef:
+      name: cnpg-ca-cert
+      key: ca.crt
+    clientCertSecretRef:
+      name: zabbix-db-client-cert
+
+  # Production flap thresholds.
+  flapThresholdCount: 2
+  flapThresholdWindow: "60s"
+  trustWindow: "1h"
