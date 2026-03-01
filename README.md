@@ -27,7 +27,7 @@ virtual machines, cloud workloads, containers, and business applications.
 | **Distributed monitoring** | Proxy architecture spans geographically dispersed sites without VPN tunnels |
 | **Alerting** | Built-in escalation policies, maintenance windows, and dependency-based suppression |
 | **Dashboards & reports** | Web-based dashboards, scheduled PDF reports via headless Chromium (Web Service) |
-| **License** | 100% open-source, Apache License 2.0 — no licensing costs, no vendor lock-in |
+| **License** | Open-source. Zabbix ≤ 6.x: GPL v2. **Zabbix 7.0+ (LTS): AGPLv3.** The CRD schemas and operator code in this repository are Apache 2.0, but the Zabbix software itself is AGPLv3 — review your organisation's open-source policy before deploying. |
 
 ### Zabbix Component Architecture
 
@@ -51,9 +51,16 @@ Custom Resource in konzd:
 Zabbix was originally designed for VM/bare-metal deployments. Running it on Kubernetes
 introduces operational complexity that konzd is designed to address:
 
-- **Leader election**: Only one `zabbix_server` instance may be active at a time; standbys
-  must remain dormant until the leader fails. konzd's operator manages this via a Kubernetes
-  Lease + EndpointSlice routing pattern, achieving ~5–25s failover RTO.
+- **Server HA and traffic routing**: Zabbix 7+ has native built-in HA — multiple
+  `zabbix_server` instances run simultaneously; each writes a heartbeat to the `ha_node`
+  PostgreSQL table, and Zabbix's own election logic designates one as `active` while others
+  remain in `standby`. The operator's job at the Kubernetes layer is different: it watches
+  which pod is currently the Zabbix-elected active node and routes external traffic to it
+  by maintaining a selector-less Service backed by an operator-managed EndpointSlice. The
+  Kubernetes Lease in the operator is for **operator controller HA** (ensuring only one
+  operator replica runs the reconcile loop at a time) — it is not a replacement for Zabbix's
+  own ha_node heartbeat mechanism. Typical EndpointSlice update latency after a Zabbix
+  active-node transition: ~5–25 s.
 - **Schema migration safety**: Zabbix database schema upgrades must run exactly once per
   version bump; the operator gates the migration Job with deterministic naming and
   idempotent state-machine checks.
