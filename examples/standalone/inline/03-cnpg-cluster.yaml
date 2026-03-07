@@ -18,6 +18,10 @@ spec:
   # Zabbix 7.x supports PostgreSQL 13–16.
   imageName: "ghcr.io/cloudnative-pg/postgresql:16"
 
+  # TLS: CNPG auto-generates certificates when this section is present.
+  # Auto-generated secrets: zabbix-pg-ca (CA), zabbix-pg-server (server cert).
+  certificates: {}
+
   # Bootstrap: create the "zabbix" database and load credentials from Secret.
   bootstrap:
     initdb:

@@ -56,10 +56,14 @@ spec:
       passwordKey: password
       database: zabbix
 
-    # TLS: disabled for dev/standalone (plaintext is fine in-cluster).
-    # For production with TLS, see examples/production-ha/inline/04-zabbixsuite.yaml.
-    # dbTLS:
-    #   mode: disable
+    # TLS: verify-ca using CNPG auto-generated cluster CA.
+    # Enable when CNPG Cluster has certificates: {} set (auto-generates zabbix-pg-ca).
+    # Comment out for development clusters without TLS.
+    dbTLS:
+      mode: verify-ca
+      caSecretRef:
+        name: zabbix-pg-ca
+        key: ca.crt
 
     # Flap detection: lenient thresholds for dev (single-node CNPG won't flap).
     flapThresholdCount: 3
@@ -102,7 +106,7 @@ spec:
     operatorImages:
       supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
       leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
-      migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+      migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
 
     # Minimal tuning for dev — lower pollers and smaller caches.
     extraEnv:

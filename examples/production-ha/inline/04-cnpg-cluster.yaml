@@ -23,6 +23,14 @@ spec:
   # PostgreSQL 16 — supported by Zabbix 7.x and 8.x.
   imageName: "ghcr.io/cloudnative-pg/postgresql:16"
 
+  # TLS — CNPG auto-generates all TLS certificates when this section is present.
+  # Generated secrets: zabbix-pg-ca (CA), zabbix-pg-server (server cert),
+  # zabbix-pg-replication (replication client cert).
+  # ZabbixDatabase.spec.dbTLS.caSecretRef → zabbix-pg-ca for verify-ca mode.
+  # Major version upgrade (e.g. PG16→17): patch spec.imageName; CNPG runs pg_upgrade
+  # automatically and the operator handles ZabbixServer scaling via CNPGMaintenance phase.
+  certificates: {}
+
   # Bootstrap: create the "zabbix" database with owner "zabbix" and password from Secret.
   # CNPG creates the app user, creates the DB, and grants ownership.
   # The bootstrap secret becomes the CNPG "app" credential; referenced by ZabbixDatabase.

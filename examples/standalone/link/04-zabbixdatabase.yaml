@@ -38,6 +38,14 @@ spec:
     passwordKey: password
     database: zabbix
 
+  # DB TLS: verify-ca using CNPG auto-generated cluster CA.
+  # Requires certificates: {} in the CNPG Cluster spec (auto-generates zabbix-pg-ca).
+  dbTLS:
+    mode: verify-ca
+    caSecretRef:
+      name: zabbix-pg-ca
+      key: ca.crt
+
   flapThresholdCount: 3
   flapThresholdWindow: "120s"
   trustWindow: "2h"

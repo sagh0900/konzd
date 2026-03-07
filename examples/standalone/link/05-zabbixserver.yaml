@@ -49,7 +49,7 @@ spec:
   operatorImages:
     supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
     leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
-    migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+    migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
 
   extraEnv:
     - name: ZBX_STARTPOLLERS

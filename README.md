@@ -44,9 +44,17 @@ does not change. No Zabbix workloads are created.
 The reference implementation is available at:
 
 ```
-ghcr.io/sagh0900/zabbix-operator:latest   # current stable
-ghcr.io/sagh0900/zabbix-operator:2.9      # pinned version (recommended for production)
+ghcr.io/sagh0900/zabbix-operator:latest    # current stable
+ghcr.io/sagh0900/zabbix-operator:2.42      # pinned version (recommended for production)
 ```
+
+The operator requires two auxiliary sidecar images injected into each Zabbix Server pod:
+
+| Image | Version | Purpose |
+|---|---|---|
+| `ghcr.io/sagh0900/zabbix-lease-sidecar` | `2.1` | Acquires K8s Lease; probes `:10051` to ensure K8s Lease ≡ Zabbix HA active |
+| `ghcr.io/sagh0900/zabbix-migration-sentinel` | `2.3` | Runs schema migrations; supports `--ha-cleanup-only`, `--probe-version` |
+| `ghcr.io/sagh0900/zabbix-supervisor` | `2.0` | Process supervisor; fences deposed Zabbix leader via heartbeat |
 
 Deploy the operator into its own namespace before applying any CRs from konzd:
 
@@ -54,13 +62,13 @@ Deploy the operator into its own namespace before applying any CRs from konzd:
 # 1. Install CRDs from konzd
 kubectl apply -f https://raw.githubusercontent.com/sagh0900/konzd/main/crds/all-crds-bundled.yaml
 
-# 2. Create the operator namespace and RBAC
+# 2. Create the operator namespace and RBAC (includes statefulsets.apps — required for ZabbixProxy)
 kubectl create namespace zabbix-operator
 # (apply your operator RBAC manifest here — ClusterRole, ClusterRoleBinding, ServiceAccount)
 
 # 3. Deploy the operator
 kubectl create deployment zabbix-operator \
-  --image=ghcr.io/sagh0900/zabbix-operator:2.9 \
+  --image=ghcr.io/sagh0900/zabbix-operator:2.42 \
   --namespace=zabbix-operator
 
 # 4. Verify it is running and has acquired the controller leader lease
@@ -74,11 +82,22 @@ kubectl logs -n zabbix-operator -l app=zabbix-operator | grep "Starting Controll
 
 ### Controller version compatibility
 
-| konzd CRDs | Operator image | Notes |
-|---|---|---|
-| `main` branch | `2.9` | Current — Prometheus metrics, DB gate, ExtraEnv, credential control, DB TLS |
-| `main` branch | `2.8` | Previous — same features; TCP liveness probe removed |
-| `main` branch | `< 2.5` | Missing credential control and DB TLS; not recommended |
+| Operator image | Lease-sidecar | Sentinel | Key features added |
+|---|---|---|---|
+| `2.42` | `2.1` | `2.3` | Secret/configmap watches; cross-CR reactive reconcile chain |
+| `2.41` | `2.1` | `2.3` | ZBX_SERVER_HOST = DNS (matches ha_node.address for PHP isRunning() check) |
+| `2.40` | `2.1` | `2.3` | DB_SERVER_HOST = ClusterIP (bypasses UDP DNS for pooler connection) |
+| `2.39` | `2.1` | `2.3` | StatefulSet RBAC fix; full decentralized deploy tested |
+| `2.28` | `2.0` | `2.3` | PhaseSchemaInit via schema-load Job (create.sql.gz \| psql) |
+| `2.24` | `2.0` | `2.3` | NodeAddress = service hostname (fixes ha_node.address vs ZBX_SERVER_HOST) |
+| `2.10` | `2.0` | `2.1` | PhaseNodeClean (ha_node cleanup before schema migration) |
+| `2.7`  | `2.0` | `2.0` | Prometheus metrics, DB gate, leadership flapping detection |
+| `< 2.5` | `2.0` | `2.0` | Missing credential control and DB TLS; **not recommended** |
+
+> **Sidecar v2.1 is required from operator v2.39+.** The lease-sidecar v2.1 probes
+> `127.0.0.1:10051` before acquiring the K8s Lease, ensuring the K8s Lease holder is always
+> the Zabbix HA active leader. Without v2.1, the K8s Lease and Zabbix ha_node elections can
+> diverge, causing the EndpointSlice to route to a standby pod that doesn't listen on 10051.
 
 ---
 
@@ -125,13 +144,14 @@ introduces operational complexity that konzd is designed to address:
 - **Server HA and traffic routing**: Zabbix 7+ has native built-in HA — multiple
   `zabbix_server` instances run simultaneously; each writes a heartbeat to the `ha_node`
   PostgreSQL table, and Zabbix's own election logic designates one as `active` while others
-  remain in `standby`. The operator's job at the Kubernetes layer is different: it watches
-  which pod is currently the Zabbix-elected active node and routes external traffic to it
-  by maintaining a selector-less Service backed by an operator-managed EndpointSlice. The
-  Kubernetes Lease in the operator is for **operator controller HA** (ensuring only one
-  operator replica runs the reconcile loop at a time) — it is not a replacement for Zabbix's
-  own ha_node heartbeat mechanism. Typical EndpointSlice update latency after a Zabbix
-  active-node transition: ~5–25 s.
+  remain in `standby`. The operator maintains a **selector-less Service** (`<name>-active`)
+  backed by an **operator-managed EndpointSlice** pointing only to the current active pod's IP.
+  A `lease-sidecar` container in each server pod acquires a **per-server Kubernetes Lease**
+  (v2.1+: only when the local Zabbix process is listening on port 10051, i.e., is the active
+  leader). The operator watches this Lease and updates the EndpointSlice within ~3s of
+  failover. The `zabbix-operator` namespace also uses a separate Lease for **operator controller
+  HA** (ensuring only one operator pod runs the reconcile loop). These are two distinct leases.
+  Typical EndpointSlice update latency after Zabbix active-node transition: ~1–5s.
 - **Schema migration safety**: Zabbix database schema upgrades must run exactly once per
   version bump; the operator gates the migration Job with deterministic naming and
   idempotent state-machine checks.
@@ -193,11 +213,14 @@ konzd/
 │   │   └── link/                    # Pre-created CRs, linked by ZabbixSuite
 │   │
 │   ├── production-ha/
-│   │   ├── inline/                  # Full HA, DB TLS, PSK, ExtraEnv, LB Service
-│   │   └── decentralized/           # Every CR owned by a separate team
+│   │   ├── inline/                  # Full HA, DB TLS, verify-ca, ExtraEnv, LB Service
+│   │   └── decentralized/           # Every CR owned by a separate team (link mode)
 │   │
-│   └── reference/                   # Fully-annotated single-CR reference manifests
-│                                    # (field-level documentation for every option)
+│   └── README.md                    # Examples index and pattern comparison
+│
+├── failover-runbook.md              # Production runbook: 9 tested failover scenarios,
+│                                    # RTO table, credential rotation, CNPG major upgrade,
+│                                    # fresh install (SchemaInit), known issues
 │
 └── README.md                        # This file
 ```
@@ -210,10 +233,10 @@ konzd/
 
 | Requirement | Version | Notes |
 |------------|---------|-------|
-| Kubernetes | ≥ 1.25 | CRDs use `apiextensions.k8s.io/v1` |
-| kubectl | ≥ 1.25 | For applying manifests |
+| Kubernetes | ≥ 1.26 | EndpointSlice GA; CRDs use `apiextensions.k8s.io/v1` |
+| kubectl | ≥ 1.26 | For applying manifests |
 | CloudNativePG operator | ≥ 1.22 | Required for database examples |
-| **Zabbix operator** | **2.9+** | **Required — CRDs do nothing without a running controller. See [The Operator](#the-operator).** |
+| **Zabbix operator** | **2.42+** | **Required — CRDs do nothing without a running controller. See [The Operator](#the-operator).** |
 
 ### 1. Install all CRDs (single command)
 
@@ -349,8 +372,36 @@ ls konzd/examples/reference/
 |---------|----------|-----|----|-----------------|----------|
 | `standalone/inline` | 1 | none | single-node CNPG | one team, one CR | dev, lab, PoC |
 | `standalone/link` | 1 | none | single-node CNPG | separate per-CR | small multi-team |
-| `production-ha/inline` | 2+ | DB mTLS + PSK | 3-node CNPG + PgBouncer | one team, one CR | production, fast iteration |
-| `production-ha/decentralized` | 2+ | DB mTLS + PSK | 3-node CNPG + PgBouncer | separate per-CR | production, platform teams |
+| `production-ha/inline` | 2+ | DB verify-ca + PSK | 2-node CNPG + PgBouncer | one team, one CR | production, fast iteration |
+| `production-ha/decentralized` | 2+ | DB verify-ca + PSK | 2-node CNPG + PgBouncer | separate per-CR (link mode) | production, platform teams |
+
+## Operational Documentation
+
+### Failover Runbook
+
+`failover-runbook.md` in this repository documents all 9 tested failover scenarios against a
+live 7-node Kubernetes cluster, with actual RTOs, timelines, and known issues:
+
+| Scenario | RTO | Result |
+|---|---|---|
+| Graceful leader pod delete | ~1s | PASS |
+| Force-kill leader pod | ~2s | PASS |
+| Kill both server pods | ~18s (pods ready) | PASS |
+| Worker node drain | ~3s | PASS |
+| CNPG primary failover | ~3s | PASS |
+| PgBouncer pod kill | ~2s | PASS |
+| Operator leader pod kill | ~20s (self-heal) | PASS |
+| Scale 0→2 cold start | ~24s (pods ready) | PASS |
+| ZabbixWeb pod kill | 0s | PASS |
+
+**All 9 scenarios: zero HTTP downtime.**
+
+Also documented in the runbook:
+- CNPG major version upgrade (PG15→16): fully operator-controlled, no manual steps
+- Zabbix version upgrade (7.0.21→7.4): automatic via `spec.version` patch
+- Fresh install (PhaseSchemaInit): `create.sql.gz | psql` Job, no manual SQL
+- Credential secret rotation procedure
+- Known issues: flapCount, EPS stale lag, drain `--force` requirement
 
 ---
 
@@ -473,3 +524,4 @@ Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
 *konzd — Kubernetes Operator Native Zabbix Distribution*
 *Maintained by SaiKrishna Ghanta, SRE — https://github.com/sagh0900/konzd*
+*Operator source: https://github.com/sagh0900/zabbix-operator (v2.42)*
