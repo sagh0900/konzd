@@ -27,7 +27,7 @@ metadata:
     environment: production
   annotations:
     # Track which version this manifest was generated for.
-    zabbix-operator.io/managed-by-version: "2.9"
+    zabbix-operator.io/managed-by-version: "2.43"
 
 spec:
   # ── Database ──────────────────────────────────────────────────────────────
@@ -142,7 +142,7 @@ spec:
     # The ServiceAccount (03-rbac.yaml) has ghcr-pull-secret pre-attached.
     operatorImages:
       supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
-      leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+      leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
       migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
 
     # ExtraEnv: tuning parameters injected from ConfigMap.
@@ -279,6 +279,31 @@ spec:
       manualApprovalGranted: false    # flip to true after pre-flight review
       cnpgBackupRequired: true        # require successful CNPG backup before DDL
       sentinelDryRun: false
+
+    # ── Post-install automation (v2.43+) ────────────────────────────────────
+    # Deletes the built-in "Zabbix server" monitoring host after fresh install.
+    # In container-native deployments the local Zabbix agent is disabled, so
+    # this host permanently shows "agent not reachable" in the web UI.
+    #
+    # Behavior:
+    #   - Runs once after UpgradePhase reaches "Running"; tracked in status.postInstallDone
+    #   - Job name: <server-name>-postinstall (auto-cleaned on CR delete)
+    #   - Idempotent: exits 0 silently if the host does not exist
+    #   - Set status.postInstallDone=false + delete the Job to force a re-run
+    #
+    # TLS CA auto-restart (v2.43+):
+    #   Server pods are annotated with SHA256(CA cert + client cert contents).
+    #   Any CNPG CA rotation changes the hash → rolling restart fires automatically.
+    disableDefaultAgentHost: true
+
+    # Secret with keys "username" + "password" for Zabbix API authentication.
+    # Default (omitted): Admin/zabbix — change after rotating the Admin password.
+    #
+    # kubectl create secret generic zabbix-admin-creds -n zabbix-suite \
+    #   --from-literal=username=Admin \
+    #   --from-literal=password=YOUR_NEW_PASSWORD
+    adminCredentialsSecretRef:
+      name: zabbix-admin-creds
 
   # ── Web (HA) ──────────────────────────────────────────────────────────────
   web:

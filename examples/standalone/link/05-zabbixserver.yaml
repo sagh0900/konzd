@@ -48,7 +48,7 @@ spec:
 
   operatorImages:
     supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
-    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
     migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
 
   extraEnv:
@@ -60,3 +60,13 @@ spec:
   upgradePolicy:
     allowMajorUpgrade: false
     requireManualApproval: false
+  # ── Post-install automation (v2.43+) ──────────────────────────────────────
+  # Deletes the built-in "Zabbix server" monitoring host after first startup.
+  # That host points to a local agent (127.0.0.1:10050) that is disabled in
+  # container-native deployments — it permanently shows "not reachable".
+  # Runs once; tracked in status.postInstallDone. Idempotent if host absent.
+  disableDefaultAgentHost: true
+
+  # Uncomment after rotating the Admin password in the UI:
+  # adminCredentialsSecretRef:
+  #   name: zabbix-admin-creds   # Secret keys: username, password

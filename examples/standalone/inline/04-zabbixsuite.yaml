@@ -105,7 +105,7 @@ spec:
     # on the ServiceAccount (applied via 02-rbac.yaml or manual patch).
     operatorImages:
       supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
-      leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+      leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
       migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
 
     # Minimal tuning for dev — lower pollers and smaller caches.
@@ -120,6 +120,16 @@ spec:
     upgradePolicy:
       allowMajorUpgrade: false
       requireManualApproval: false
+
+    # ── Post-install automation (v2.43+) ────────────────────────────────────
+    # Deletes the built-in "Zabbix server" monitoring host on first startup.
+    # That host monitors a local agent (127.0.0.1:10050) which is disabled in
+    # containers — it permanently shows "agent not reachable" in the web UI.
+    # Runs once; tracked in status.postInstallDone. Idempotent if host absent.
+    # Uncomment adminCredentialsSecretRef after rotating the Admin password.
+    disableDefaultAgentHost: true
+    # adminCredentialsSecretRef:
+    #   name: zabbix-admin-creds   # Secret keys: username, password
 
   # ── Web ───────────────────────────────────────────────────────────────────
   web:

@@ -167,8 +167,8 @@ spec:
   # Leave unset to use operator defaults (recommended).
   operatorImages:
     supervisorImage:         "ghcr.io/sagh0900/zabbix-supervisor:2.0"
-    leaseSidecarImage:       "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
-    migrationSentinelImage:  "ghcr.io/sagh0900/zabbix-migration-sentinel:2.0"
+    leaseSidecarImage:       "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
+    migrationSentinelImage:  "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
 
   # ── Extra environment variables (v2.6+) ────────────────────────────────────
   # Inject arbitrary additional env vars into the zabbix-server container.
@@ -244,6 +244,64 @@ spec:
   # The operator owns and locks these environment variable keys; any manual edits
   # to these keys on the Pod spec will be overwritten on the next reconcile.
   # Default set is populated by the admission webhook if left empty here.
+  # protectedEnvKeys:
+  #   - ZBX_DB_HOST
+  #   - ZBX_DB_PORT
+  #   - ZBX_DB_NAME
+  #   - ZBX_DB_USER
+  #   - ZBX_DB_PASSWORD
+  #   - ZBX_DB_SCHEMA
+  #   - ZBX_HANODENAME
+  #   - ZBX_NODEADDRESS
+  #   - ZBX_DB_TLS_CONNECT
+  #   - ZBX_DB_TLS_CAFILE
+  #   - ZBX_DB_TLS_CERTFILE
+  #   - ZBX_DB_TLS_KEYFILE
+
+  # ── Post-install automation (v2.43+) ──────────────────────────────────────
+  # disableDefaultAgentHost: removes the built-in "Zabbix server" monitoring host
+  # that Zabbix ships by default. In container-native deployments the local Zabbix
+  # agent binary is present in the image but disabled, causing this host to
+  # permanently display "agent not reachable" in the web UI.
+  #
+  # How it works:
+  #   1. After UpgradePhase first reaches "Running", the operator creates a one-shot
+  #      Job named <server-name>-postinstall.
+  #   2. The Job runs Python3 (stdlib only, no pip) inside the server image.
+  #   3. It authenticates to the Zabbix API (ZBX_API_URL → web service ClusterIP).
+  #   4. Calls host.get filtering on host name = "Zabbix server".
+  #   5. If found: calls host.delete and exits 0.
+  #   6. If not found: exits 0 silently (idempotent — safe to set on existing deployments).
+  #   7. On completion: status.postInstallDone is set to true; Job never re-runs.
+  #   8. On failure: PostInstallFailed condition is set; delete Job to retry.
+  #
+  # TLS CA rotation (v2.43+):
+  #   Server pods carry annotation zabbix.io/db-tls-secret-hash = SHA256(CA cert content).
+  #   When CNPG rotates its CA the secret content changes → hash changes → Deployment
+  #   spec changes → rolling restart triggered automatically.
+  #
+  # Set to true for all container-native deployments:
+  disableDefaultAgentHost: true
+
+  # adminCredentialsSecretRef: Secret with keys "username" and "password" for
+  # authenticating to the Zabbix API in the post-install job.
+  #
+  # When omitted: Zabbix factory defaults (Admin/zabbix) are used.
+  #   → Correct on fresh install before the Admin password is rotated.
+  #
+  # After rotating the Admin password in the Zabbix UI:
+  #   1. Create the Secret:
+  #        kubectl create secret generic zabbix-admin-creds -n <namespace> \
+  #          --from-literal=username=Admin \
+  #          --from-literal=password=<new-password>
+  #   2. Uncomment and set this field.
+  #   3. Set status.postInstallDone=false + delete <server>-postinstall Job to re-run.
+  #
+  # adminCredentialsSecretRef:
+  #   name: zabbix-admin-creds
+
+  # ── Protected env keys ─────────────────────────────────────────────────────
+  # (Reference repeated from above for completeness)
   # protectedEnvKeys:
   #   - ZBX_DB_HOST
   #   - ZBX_DB_PORT

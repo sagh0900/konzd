@@ -114,3 +114,66 @@ kubectl apply -f examples/standalone/inline/02-cnpg-cluster.yaml
 kubectl wait cluster zabbix-pg -n zabbix-dev --for=condition=Ready --timeout=300s
 kubectl apply -f examples/standalone/inline/03-zabbixsuite.yaml
 ```
+
+---
+
+## What's New — v2.43
+
+### Automatic Pod Restart on CNPG CA Rotation
+Server pods are now annotated with a SHA256 hash of the DB CA certificate and client
+certificate secret contents:
+```
+zabbix.io/db-tls-secret-hash: <16-char hex>
+```
+When CNPG rotates its CA and updates the secret, the hash changes → the Deployment spec
+changes → a rolling restart fires automatically. **No manual `kubectl rollout restart` needed.**
+
+Applicable when `spec.database.dbTLS.caSecretRef` or `clientCertSecretRef` is configured.
+
+---
+
+### Post-Install: Remove Default Agent Host (`disableDefaultAgentHost`)
+
+Zabbix ships with a built-in **"Zabbix server"** monitoring host that points to a local
+Zabbix agent at `127.0.0.1:10050`. In container-native deployments the agent binary is
+present in the image but disabled — this host permanently shows **"agent not reachable"**
+in the web UI, which is noise.
+
+Set `spec.disableDefaultAgentHost: true` (or `spec.server.disableDefaultAgentHost: true`
+in ZabbixSuite inline mode) to automatically delete this host after first startup:
+
+```yaml
+# ZabbixServer CR (standalone / link mode)
+spec:
+  disableDefaultAgentHost: true
+
+  # Optional: only needed after rotating the Admin password from the Zabbix default.
+  # On fresh install (Admin/zabbix), omit this field — factory credentials are used.
+  # adminCredentialsSecretRef:
+  #   name: zabbix-admin-creds   # Secret keys: username, password
+```
+
+**Behavior:**
+| Scenario | Result |
+|----------|--------|
+| Host exists (`"Zabbix server"`) | Deleted via API; `status.postInstallDone: true` |
+| Host already deleted | Job exits 0 silently; `status.postInstallDone: true` |
+| API auth fails (wrong password) | Job retries 3×; `PostInstallFailed` condition set |
+| To re-run | Set `status.postInstallDone: false` + `kubectl delete job <server>-postinstall` |
+
+**Admin credentials secret** (`zabbix-admin-creds`):
+
+```yaml
+# 01-secrets.yaml — add if Admin password has been changed from factory default
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zabbix-admin-creds
+  namespace: zabbix-suite
+type: Opaque
+stringData:
+  username: "Admin"
+  password: "YOUR_CURRENT_ADMIN_PASSWORD"
+```
+
+All secrets files in this directory include a pre-configured `zabbix-admin-creds` template.

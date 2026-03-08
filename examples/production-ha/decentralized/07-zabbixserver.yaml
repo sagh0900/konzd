@@ -77,7 +77,7 @@ spec:
 
   operatorImages:
     supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
-    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.0"
+    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
     migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
 
   # ExtraEnv: mixed static values, ConfigMap refs, and Secret refs.
@@ -169,3 +169,32 @@ spec:
     manualApprovalGranted: false
     cnpgBackupRequired: true
     sentinelDryRun: false
+
+  # ── Post-install automation (v2.43+) ──────────────────────────────────────
+  # Deletes the built-in "Zabbix server" monitoring host that Zabbix ships by
+  # default. In container-native deployments the local Zabbix agent is disabled,
+  # so this host permanently shows "agent not reachable" in the web UI.
+  #
+  # Behavior:
+  #   - Runs once after UpgradePhase first reaches "Running" (fresh install or upgrade)
+  #   - Tracked in status.postInstallDone; set to false + delete the Job to re-run
+  #   - Job name: <server-name>-postinstall (owned by this CR, auto-cleaned on CR delete)
+  #   - Idempotent: exits 0 silently if the host does not exist
+  #   - Uses Python3 stdlib (no extra packages); runs inside the server image
+  #
+  # TLS CA rotation note (v2.43+):
+  #   The operator automatically annotates server pods with a SHA256 hash of the
+  #   DB CA + client-cert secret content. Any CNPG CA rotation changes the hash,
+  #   triggering a rolling restart of server pods automatically.
+  disableDefaultAgentHost: true
+
+  # Optional: reference a Secret with keys "username" and "password" for Zabbix API auth.
+  # Default (when omitted): Admin/zabbix (Zabbix factory credentials for fresh installs).
+  # After changing the Admin password in the UI, create this Secret and uncomment.
+  #
+  # kubectl create secret generic zabbix-admin-creds -n zabbix-suite \
+  #   --from-literal=username=Admin \
+  #   --from-literal=password=YOUR_NEW_PASSWORD
+  #
+  adminCredentialsSecretRef:
+    name: zabbix-admin-creds
