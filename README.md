@@ -45,7 +45,7 @@ The reference implementation is available at:
 
 ```
 ghcr.io/sagh0900/zabbix-operator:latest    # current stable
-ghcr.io/sagh0900/zabbix-operator:2.42      # pinned version (recommended for production)
+ghcr.io/sagh0900/zabbix-operator:2.46      # pinned version (recommended for production)
 ```
 
 The operator requires two auxiliary sidecar images injected into each Zabbix Server pod:
@@ -68,7 +68,7 @@ kubectl create namespace zabbix-operator
 
 # 3. Deploy the operator
 kubectl create deployment zabbix-operator \
-  --image=ghcr.io/sagh0900/zabbix-operator:2.42 \
+  --image=ghcr.io/sagh0900/zabbix-operator:2.46 \
   --namespace=zabbix-operator
 
 # 4. Verify it is running and has acquired the controller leader lease
@@ -84,11 +84,15 @@ kubectl logs -n zabbix-operator -l app=zabbix-operator | grep "Starting Controll
 
 | Operator image | Lease-sidecar | Sentinel | Key features added |
 |---|---|---|---|
-| `2.42` | `2.1` | `2.3` | Secret/configmap watches; cross-CR reactive reconcile chain |
-| `2.41` | `2.1` | `2.3` | ZBX_SERVER_HOST = DNS (matches ha_node.address for PHP isRunning() check) |
-| `2.40` | `2.1` | `2.3` | DB_SERVER_HOST = ClusterIP (bypasses UDP DNS for pooler connection) |
-| `2.39` | `2.1` | `2.3` | StatefulSet RBAC fix; full decentralized deploy tested |
-| `2.28` | `2.0` | `2.3` | PhaseSchemaInit via schema-load Job (create.sql.gz \| psql) |
+| `2.46` | `2.1` | `2.3` | Staged HA startup in PostUpgrade (1 pod first); web-ready gate for post-install job |
+| `2.45` | `2.1` | `2.3` | PhaseRunning re-asserts ServerReady condition; lifecycle-test manifests |
+| `2.44` | `2.1` | `2.3` | Post-install job uses `python:3-alpine` (Zabbix server image has no python3/curl) |
+| `2.43` | `2.1` | `2.3` | `disableDefaultAgentHost`; CA hash annotation for auto-restart on CNPG CA rotation |
+| `2.42` | `2.1` | `2.3` | Secret/ConfigMap watches; cross-CR reactive reconcile chain |
+| `2.41` | `2.1` | `2.3` | ZBX_SERVER_HOST = DNS name (matches ha_node.address for PHP `isRunning()` check) |
+| `2.40` | `2.1` | `2.3` | DB_SERVER_HOST = ClusterIP at reconcile time (bypasses UDP DNS for pooler) |
+| `2.39` | `2.1` | `2.3` | StatefulSet RBAC fix; full decentralized deploy tested end-to-end |
+| `2.28` | `2.0` | `2.3` | PhaseSchemaInit via schema-load Job (`create.sql.gz \| psql`) |
 | `2.24` | `2.0` | `2.3` | NodeAddress = service hostname (fixes ha_node.address vs ZBX_SERVER_HOST) |
 | `2.10` | `2.0` | `2.1` | PhaseNodeClean (ha_node cleanup before schema migration) |
 | `2.7`  | `2.0` | `2.0` | Prometheus metrics, DB gate, leadership flapping detection |
@@ -216,7 +220,15 @@ konzd/
 │   │   ├── inline/                  # Full HA, DB TLS, verify-ca, ExtraEnv, LB Service
 │   │   └── decentralized/           # Every CR owned by a separate team (link mode)
 │   │
-│   └── README.md                    # Examples index and pattern comparison
+│   ├── lifecycle-test/              # Verified end-to-end: fresh install → CNPG major
+│   │   │                            # upgrade (PG15→16) → Zabbix upgrade (7.0.21→7.4)
+│   │   ├── 00-namespace.yaml
+│   │   ├── 01-zabbixserver.yaml     # Standalone ZabbixServer (linked by suite)
+│   │   ├── 02-zabbixweb.yaml        # Standalone ZabbixWeb (linked by suite)
+│   │   ├── 03-zabbixwebservice.yaml # Standalone ZabbixWebService (linked by suite)
+│   │   └── 04-zabbixsuite.yaml      # ZabbixSuite (link mode + inline DaemonSet agent)
+│   │
+│   └── README.md                    # Examples index, pattern comparison, API notes
 │
 ├── failover-runbook.md              # Production runbook: 9 tested failover scenarios,
 │                                    # RTO table, credential rotation, CNPG major upgrade,
@@ -236,7 +248,7 @@ konzd/
 | Kubernetes | ≥ 1.26 | EndpointSlice GA; CRDs use `apiextensions.k8s.io/v1` |
 | kubectl | ≥ 1.26 | For applying manifests |
 | CloudNativePG operator | ≥ 1.22 | Required for database examples |
-| **Zabbix operator** | **2.42+** | **Required — CRDs do nothing without a running controller. See [The Operator](#the-operator).** |
+| **Zabbix operator** | **2.46+** | **Required — CRDs do nothing without a running controller. See [The Operator](#the-operator).** |
 
 ### 1. Install all CRDs (single command)
 
@@ -282,9 +294,76 @@ zabbixwebs.zabbix.io             2026-03-01T00:00:00Z
 
 ---
 
+## Critical API Notes
+
+These are the most commonly misused fields in ZabbixSuite manifests. All example
+manifests in this repository have been corrected to reflect the actual API.
+
+### `spec.cnpg` — not `spec.database`
+
+The CNPG section uses the key `cnpg:`, not `database:`:
+
+```yaml
+spec:
+  cnpg:                          # ← correct
+    clusterRef: {apiVersion: postgresql.cnpg.io/v1, kind: Cluster, name: zabbix-pg, namespace: zabbix-suite}
+    poolerRef:  {apiVersion: postgresql.cnpg.io/v1, kind: Pooler, name: zabbix-pg-pooler-rw, namespace: zabbix-suite}
+    directServiceName: zabbix-pg-rw   # ← not directServiceRef
+    trustWindow: "1h"
+```
+
+### ZabbixDatabase has NO link mode
+
+`ZabbixDatabase` is always created and managed by the suite from the `cnpg:` section.
+There is no `database.existingRef` field. The suite always creates `<suite-name>-db`.
+
+### Link mode uses `name:`, not `existingRef.name:`
+
+```yaml
+# CORRECT
+server:
+  name: my-zabbix-server
+
+# WRONG — field does not exist
+server:
+  existingRef:
+    name: my-zabbix-server
+```
+
+### Inline mode wraps specs under `.spec`
+
+```yaml
+# CORRECT
+server:
+  spec:
+    image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+    replicas: 2
+
+# WRONG — image/replicas must be nested under spec
+server:
+  image: "zabbix/..."
+  replicas: 2
+```
+
+### Proxies and Agents in link mode: flat `existingRef: true`
+
+```yaml
+# CORRECT
+agents:
+  - name: my-zabbix-agent
+    existingRef: true
+
+# WRONG
+agents:
+  - existingRef:
+      name: my-zabbix-agent
+```
+
+---
+
 ## Usage — Examples
 
-konzd ships four example patterns, each progressively more feature-complete.
+konzd ships five example patterns, each progressively more feature-complete.
 Apply them in the numbered order within each directory.
 
 ### Pattern 1: Standalone / Inline (dev/lab)
@@ -351,6 +430,31 @@ for f in konzd/examples/production-ha/decentralized/0*.yaml \
 done
 ```
 
+### Pattern 5: Lifecycle Test (verified end-to-end)
+
+A lean decentralized deployment verified on a 7-node live cluster. Demonstrates:
+1. Fresh install (Zabbix 7.0.21 + PG15, schema auto-loaded via PhaseSchemaInit)
+2. CNPG major version upgrade PG15 → PG16 (no manual steps)
+3. Zabbix upgrade 7.0.21 → 7.4.0 (full state machine)
+
+```bash
+kubectl apply -f konzd/examples/lifecycle-test/00-namespace.yaml
+
+# Pre-create CNPG cluster + pooler (see 04-cnpg-cluster.yaml in production-ha/inline/)
+kubectl wait cluster zabbix-pg -n zabbix-suite --for=condition=Ready --timeout=300s
+
+# Standalone component CRs first (ZabbixSuite links to them)
+kubectl apply -f konzd/examples/lifecycle-test/01-zabbixserver.yaml
+kubectl apply -f konzd/examples/lifecycle-test/02-zabbixweb.yaml
+kubectl apply -f konzd/examples/lifecycle-test/03-zabbixwebservice.yaml
+
+# ZabbixSuite last (creates ZabbixDatabase + inline agent, links to above CRs)
+kubectl apply -f konzd/examples/lifecycle-test/04-zabbixsuite.yaml
+
+# Watch until Ready
+kubectl get zabbixsuite my-zabbix -n zabbix-suite -w
+```
+
 ### Reference Manifests
 
 The `examples/reference/` directory contains fully-annotated single-CR manifests
@@ -372,8 +476,44 @@ ls konzd/examples/reference/
 |---------|----------|-----|----|-----------------|----------|
 | `standalone/inline` | 1 | none | single-node CNPG | one team, one CR | dev, lab, PoC |
 | `standalone/link` | 1 | none | single-node CNPG | separate per-CR | small multi-team |
-| `production-ha/inline` | 2+ | DB verify-ca + PSK | 2-node CNPG + PgBouncer | one team, one CR | production, fast iteration |
-| `production-ha/decentralized` | 2+ | DB verify-ca + PSK | 2-node CNPG + PgBouncer | separate per-CR (link mode) | production, platform teams |
+| `production-ha/inline` | 2+ | DB verify-ca + PSK | 3-node CNPG + PgBouncer | one team, one CR | production, fast iteration |
+| `production-ha/decentralized` | 2+ | DB verify-ca + PSK | 3-node CNPG + PgBouncer | separate per-CR (link mode) | production, platform teams |
+| `lifecycle-test` | 2 | none | single-node CNPG + PgBouncer | standalone CRs + suite | verified reference; integration testing |
+
+## What's New
+
+### v2.46
+
+**Staged HA startup in PostUpgrade**: `reconcilePostUpgrade` now uses a two-step
+strategy. It starts with `replicas=1` first, waits for that pod to be Available
+(confirms DB connectivity, schema, and image all work), then scales to `spec.replicas`.
+This prevents cascading `CrashLoopBackOff` across all pods when an upgrade completes
+with a problematic image or unfinished schema.
+
+**Post-install web readiness gate**: The `disableDefaultAgentHost` job now checks that
+the ZabbixWeb Deployment has `AvailableReplicas >= 1` before creating the API job.
+PHP-FPM is guaranteed to be serving requests when the Zabbix JSON-RPC call fires —
+no more wasted Job retries against a starting web pod.
+
+### v2.45
+
+**PhaseRunning ServerReady re-assertion**: The operator now re-asserts
+`ServerReady=True` on every reconcile pass while in `PhaseRunning`. Previously, if
+the condition was accidentally wiped (e.g., via a manual `kubectl patch status`), it
+would not be restored until the next upgrade cycle. Now it self-heals immediately.
+
+### v2.43
+
+**`disableDefaultAgentHost`**: New field on `ZabbixServerSpec`. When true, a one-shot
+Job deletes Zabbix's built-in "Zabbix server" monitoring host after first startup (it
+points to a local agent that is disabled in containers and permanently shows "not
+reachable"). Completion tracked in `status.postInstallDone`; idempotent.
+
+**Automatic rolling restart on CNPG CA rotation**: Server pod templates are annotated
+with `SHA256(DB CA cert + client cert)`. Any CNPG CA rotation changes the hash →
+rolling restart fires automatically. No manual `kubectl rollout restart` needed.
+
+---
 
 ## Operational Documentation
 
@@ -524,4 +664,4 @@ Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
 *konzd — Kubernetes Operator Native Zabbix Distribution*
 *Maintained by SaiKrishna Ghanta, SRE — https://github.com/sagh0900/konzd*
-*Operator source: https://github.com/sagh0900/zabbix-operator (v2.42)*
+*Operator source: https://github.com/sagh0900/zabbix-operator (v2.46)*

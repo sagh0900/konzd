@@ -1,0 +1,28 @@
+---
+# Lifecycle Test — Namespace
+#
+# This example set demonstrates the complete Zabbix operator lifecycle as
+# actually tested on a live 7-node Kubernetes cluster:
+#
+#   Phase 1: Fresh deploy — Zabbix 7.0.21 on PG15 (CNPG, schema auto-loaded)
+#   Phase 2: CNPG major version upgrade PG15 → PG16 (operator-managed, no downtime)
+#   Phase 3: Zabbix upgrade 7.0.21 → 7.4.0 (operator state machine)
+#
+# Deployment topology: Decentralized / Link Mode
+#   - ZabbixServer, ZabbixWeb, ZabbixWebService: standalone CRs (apply first)
+#   - ZabbixAgent: inline in ZabbixSuite (suite creates/manages the DaemonSet)
+#   - ZabbixDatabase: always suite-managed from cnpg: section
+#
+# Apply order:
+#   00-namespace.yaml          ← this file
+#   01-zabbixserver.yaml       ← standalone ZabbixServer CR
+#   02-zabbixweb.yaml          ← standalone ZabbixWeb CR
+#   03-zabbixwebservice.yaml   ← standalone ZabbixWebService CR
+#   04-zabbixsuite.yaml        ← ZabbixSuite (link mode, creates DB + inline agent)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix
+    app.kubernetes.io/managed-by: zabbix-operator

@@ -1,0 +1,100 @@
+---
+# ZabbixServer — Lifecycle Test (Decentralized / Link Mode)
+#
+# Standalone CR referenced by ZabbixSuite via spec.server.name.
+# The operator injects spec.databaseRef when the suite links this CR.
+#
+# Starting version: 7.0.21 (fresh install starting point)
+# Upgrade path: 7.0.21 → 7.4.0 (Phase 3 of lifecycle test)
+#
+# UPGRADE INSTRUCTION:
+#   Patch both spec.version AND spec.image atomically in a single kubectl patch
+#   to avoid a race where the upgrade state machine starts with the old image:
+#
+#   kubectl patch zabbixserver my-zabbix-server -n zabbix-suite --type=merge -p '{
+#     "spec": {
+#       "version": "7.4.0",
+#       "image": "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+#     }
+#   }'
+#
+# UPGRADE STATE MACHINE (operator-managed, no manual steps):
+#   Idle → PreFlight → NodeClean → SingleNode → DirectDB →
+#   SchemaUpgrade → ScaleDown → PostUpgrade → Healthy → Running
+#
+# v2.46 staged HA startup:
+#   PostUpgrade starts with replicas=1 first. Once that pod is available
+#   (confirms DB connectivity, schema, image all OK), it scales to spec.replicas.
+#   This catches bad images or schema issues early with minimal blast radius.
+#
+# FRESH INSTALL (PhaseSchemaInit):
+#   On a blank database, the operator detects runningVersion="" and starts the
+#   server in standalone mode (1 replica, ZBX_STANDALONE_UPGRADE=1). The Zabbix
+#   binary auto-initialises the schema. Once an ACTIVE ha_node appears in the DB,
+#   the operator transitions through PostUpgrade → Running.
+#   No manual SQL or psql commands required.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixServer
+metadata:
+  name: my-zabbix-server
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-server
+    app.kubernetes.io/instance: my-zabbix
+spec:
+  # Starting image for fresh install. Update to ubuntu-7.4-latest for 7.4 upgrade.
+  image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+  replicas: 2
+  version: "7.4.0"
+
+  # DB is injected by ZabbixSuite when it links this CR.
+  # Pre-populate for documentation clarity and standalone operation.
+  databaseRef:
+    name: my-zabbix-db
+
+  # Lease timing — production defaults (verified across 9 failover scenarios).
+  leaseDuration: "20s"
+  renewDeadline: "15s"
+  retryPeriod: "3s"
+  deltaNet: "2s"
+  deltaDisk: "1s"
+
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+  upgradeResources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+  # No PSK in lifecycle test — in-cluster only, ClusterIP service.
+  tls:
+    mode: "none"
+
+  service:
+    type: ClusterIP
+
+  operatorImages:
+    supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
+    migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
+
+  upgradePolicy:
+    allowMajorUpgrade: false
+    requireManualApproval: false
+
+  # Post-install: delete built-in "Zabbix server" agent host (points to disabled
+  # local agent 127.0.0.1:10050; always shows "not reachable" in containers).
+  # Uses default Admin/zabbix credentials (fresh install factory default).
+  #
+  # v2.46: the post-install job waits for ZabbixWeb to have AvailableReplicas >= 1
+  # before being created. PHP-FPM is guaranteed ready when the API call fires.
+  disableDefaultAgentHost: true

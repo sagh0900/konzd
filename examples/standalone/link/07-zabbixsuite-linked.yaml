@@ -1,5 +1,5 @@
 ---
-# ZabbixSuite — Link Mode (Decentralized / Standalone)
+# ZabbixSuite — Standalone / Link Mode
 #
 # LINK MODE: References pre-created component CRs by name instead of embedding
 # component specs inline. The operator:
@@ -7,14 +7,22 @@
 #   - Reads component CR statuses to compute its own SuiteReady condition
 #   - Does NOT modify any other spec fields on linked CRs
 #
+# LINK MODE SYNTAX (corrected):
+#   server:
+#     name: my-zabbix-server   ← flat name field, NOT existingRef.name
+#
+# For proxies/agents: flat name + existingRef: true on the list entry:
+#   agents:
+#     - name: my-zabbix-agent
+#       existingRef: true
+#
+# IMPORTANT: ZabbixDatabase has NO link mode — it is ALWAYS suite-managed.
+# The suite always creates "<suite-name>-db" from the cnpg: section.
+# There is no database.existingRef — the cnpg: section is mandatory.
+#
 # PREREQUISITES (apply in order before this file):
-#   04-zabbixdatabase.yaml   → my-zabbix-db
 #   05-zabbixserver.yaml     → my-zabbix-server
 #   06-zabbixweb.yaml        → my-zabbix-web
-#
-# LINK MODE vs INLINE:
-#   Link mode: each CR owned by separate team; ZabbixSuite is a "view" aggregator
-#   Inline mode: ZabbixSuite owns all component lifecycles
 apiVersion: zabbix.io/v1alpha1
 kind: ZabbixSuite
 metadata:
@@ -24,26 +32,37 @@ metadata:
     app.kubernetes.io/name: zabbix-suite
     app.kubernetes.io/instance: my-zabbix
     environment: development
+  annotations:
+    zabbix-operator.io/managed-by-version: "2.46"
 
 spec:
-  # ── Database reference (link mode) ────────────────────────────────────────
-  # existingRef: true — operator reads the named CR's status only; no spec changes.
-  # The ZabbixDatabase CR must already exist and be healthy.
-  database:
-    existingRef:
-      name: my-zabbix-db
-      namespace: zabbix-dev   # optional; defaults to ZabbixSuite namespace
+  version: "7.4.0"
 
-  # ── Server reference (link mode) ──────────────────────────────────────────
+  storageReclaimPolicy: Retain
+
+  # ── CNPG database backend ──────────────────────────────────────────────────
+  # ZabbixDatabase is ALWAYS created and managed by the suite (no link mode).
+  # The suite creates "my-zabbix-db" (= <suite-name>-db) from these CNPG refs.
+  cnpg:
+    clusterRef:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      name: zabbix-pg
+      namespace: zabbix-dev
+    directServiceName: zabbix-pg-rw
+    trustWindow: "2h"
+
+  # ── Server (link mode) ────────────────────────────────────────────────────
+  # The operator injects databaseRef on this CR (wiring to the suite's DB).
+  # All other ZabbixServer spec fields are owned by the standalone CR.
   server:
-    existingRef:
-      name: my-zabbix-server
+    name: my-zabbix-server
     # enabled: true   # default; set false to exclude from SuiteReady aggregate
 
-  # ── Web reference (link mode) ─────────────────────────────────────────────
+  # ── Web (link mode) ───────────────────────────────────────────────────────
+  # The operator injects serverRef on this CR to ensure correct wiring.
   web:
-    existingRef:
-      name: my-zabbix-web
+    name: my-zabbix-web
     enabled: true
 
   # ── JMX (disabled in this example) ────────────────────────────────────────
@@ -54,16 +73,22 @@ spec:
   snmpTrapper:
     enabled: false
 
-  # ── Proxy and Agent references (link mode, existingRef: true) ─────────────
-  # In link mode, proxies and agents can also be referenced.
-  # The operator reads their status but does NOT modify their specs.
+  # ── Proxy/Agent references (link mode) ────────────────────────────────────
+  # existingRef: true — operator reads status only; does NOT modify spec.
   #
   # proxies:
-  #   - existingRef:
-  #       name: my-zabbix-proxy-eu
-  #     enabled: true
+  #   - name: my-zabbix-proxy-eu
+  #     existingRef: true
   #
   # agents:
-  #   - existingRef:
-  #       name: my-zabbix-agent
-  #     enabled: true
+  #   - name: my-zabbix-agent
+  #     existingRef: true
+
+  upgradePolicy:
+    allowMajorUpgrade: false
+    requireManualApproval: false
+
+  operatorImages:
+    supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
+    migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"

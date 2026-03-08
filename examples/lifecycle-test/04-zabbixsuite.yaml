@@ -1,0 +1,159 @@
+---
+# ZabbixSuite — Lifecycle Test (Decentralized / Link Mode)
+#
+# ════════════════════════════════════════════════════════════════════════════
+# LIFECYCLE TEST TOPOLOGY
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Deployment pattern: Decentralized Link Mode
+#   - ZabbixDatabase: always suite-managed (created from spec.cnpg, named "my-zabbix-db")
+#   - ZabbixServer:   link mode → pre-created standalone CR (01-zabbixserver.yaml)
+#   - ZabbixWeb:      link mode → pre-created standalone CR (02-zabbixweb.yaml)
+#   - ZabbixWebService: link mode → pre-created standalone CR (03-zabbixwebservice.yaml)
+#   - ZabbixAgent:    inline mode → suite creates and manages the DaemonSet
+#
+# APPLY ORDER:
+#   01-zabbixserver.yaml, 02-zabbixweb.yaml, 03-zabbixwebservice.yaml
+#   Then this file (suite links them and creates ZabbixDatabase).
+#
+# ════════════════════════════════════════════════════════════════════════════
+# OPERATOR LIFECYCLE AUTOMATION (all phases require zero manual steps)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Phase 1 — Fresh install (Zabbix 7.0.21 on PG15):
+#   Operator detects blank DB (runningVersion="") → PhaseSchemaInit
+#   ZabbixServer starts standalone (1 replica, ZBX_STANDALONE_UPGRADE=1)
+#   Zabbix binary auto-loads schema → ha_node ACTIVE entry appears
+#   Operator probes schema version → transitions to Healthy → Running
+#   Post-install job fires after ZabbixWeb is available (v2.46): deletes
+#     built-in "Zabbix server" host (shows "agent not reachable" in containers)
+#
+# Phase 2 — CNPG PG15 → PG16 upgrade (operator-managed):
+#   Patch CNPG Cluster spec.imageName → CNPG triggers pg_upgrade Job
+#   ZabbixServer enters PhaseCNPGMaintenance (scaled to 0 automatically)
+#   Operator waits for PG16 cluster Ready → restores ZabbixServer
+#   Total downtime: ~10 min (pg_upgrade + replica rebuild)
+#
+# Phase 3 — Zabbix 7.0.21 → 7.4.0 upgrade (operator state machine):
+#   Patch spec.version + spec.image ATOMICALLY in a single kubectl patch
+#   (two separate patches risk a race where state machine fires mid-way)
+#   Upgrade phases: PreFlight → NodeClean → SingleNode → DirectDB →
+#     SchemaUpgrade → ScaleDown → PostUpgrade → Healthy → Running
+#   v2.46 staged HA startup: PostUpgrade starts 1 pod first (confirms DB +
+#     schema OK), then scales to spec.replicas. Zero cascading CrashLoops.
+#
+# ════════════════════════════════════════════════════════════════════════════
+# CREDENTIALS AUTO-DISCOVERY
+# ════════════════════════════════════════════════════════════════════════════
+#
+# DB credentials are auto-discovered from the CNPG Cluster
+# bootstrap.initdb.secret (here: "zabbix-db-creds"). No explicit
+# credentialsRef needed if the secret name matches.
+#
+# Pre-create the secret before applying 04-cnpg-cluster.yaml:
+#
+#   kubectl create secret generic zabbix-db-creds -n zabbix-suite \
+#     --from-literal=username=zabbix \
+#     --from-literal=password=YOUR_DB_PASSWORD
+#
+# Then reference in CNPG Cluster spec:
+#   spec:
+#     bootstrap:
+#       initdb:
+#         secret:
+#           name: zabbix-db-creds
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixSuite
+metadata:
+  name: my-zabbix
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-suite
+    app.kubernetes.io/instance: my-zabbix
+  annotations:
+    zabbix-operator.io/managed-by-version: "2.46"
+
+spec:
+  # Zabbix version: propagated to linked ZabbixServer (version + upgradePolicy).
+  version: "7.4.0"
+
+  storageReclaimPolicy: Retain
+
+  # ── CNPG database backend ──────────────────────────────────────────────────
+  # Suite always creates ZabbixDatabase "my-zabbix-db" from these refs.
+  # ZabbixDatabase has NO link mode — it is always suite-managed.
+  # Credentials auto-discovered from CNPG cluster bootstrap.initdb.secret.
+  cnpg:
+    clusterRef:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      name: zabbix-pg
+      namespace: zabbix-suite
+    poolerRef:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Pooler
+      name: zabbix-pg-pooler-rw
+      namespace: zabbix-suite
+    directServiceName: zabbix-pg-rw
+    trustWindow: "1h"
+
+  # ── Server — LINK MODE ────────────────────────────────────────────────────
+  # Suite propagates: version, upgradePolicy to the linked server.
+  # Suite does NOT overwrite image, resources, tls, or other spec fields.
+  server:
+    name: my-zabbix-server
+
+  # ── Web — LINK MODE ───────────────────────────────────────────────────────
+  # Suite propagates: serverRef.name to my-zabbix-web (ensures correct wiring).
+  web:
+    name: my-zabbix-web
+
+  # ── WebService — LINK MODE ────────────────────────────────────────────────
+  webService:
+    name: my-zabbix-webservice
+
+  # ── Agent — INLINE MODE ───────────────────────────────────────────────────
+  # Suite creates and manages the DaemonSet agent.
+  # Active mode: agent initiates connections to ZabbixServer (no inbound port).
+  # Tolerations ensure the agent runs on control-plane nodes too.
+  #
+  # NOTE: existingRef: true for agents does NOT work for reconcile — the
+  # operator requires suite ownership (ownerRef or suite-link finalizer) to
+  # reconcile agent specs. Use inline spec (no existingRef) or pre-create the
+  # agent CR and reference it via name: with the suite writing the ownerRef.
+  agents:
+    - name: my-zabbix-agent
+      spec:
+        image: "zabbix/zabbix-agent2:ubuntu-7.4-latest"
+        mode: active
+        deploymentMode: DaemonSet
+        tls:
+          mode: "none"
+        tolerations:
+          - key: "node-role.kubernetes.io/control-plane"
+            operator: "Exists"
+            effect: "NoSchedule"
+          - operator: "Exists"
+            effect: "NoExecute"
+            tolerationSeconds: 300
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+
+  # ── Upgrade policy (propagated to linked server) ──────────────────────────
+  upgradePolicy:
+    allowMajorUpgrade: false
+    requireManualApproval: false
+    manualApprovalGranted: false
+    cnpgBackupRequired: false
+
+  # ── Operator sidecar images ───────────────────────────────────────────────
+  operatorImages:
+    supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
+    migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"

@@ -1,0 +1,48 @@
+---
+# ZabbixWeb — Lifecycle Test (Decentralized / Link Mode)
+#
+# Standalone CR referenced by ZabbixSuite via spec.web.name.
+# The operator injects spec.serverRef when the suite links this CR.
+#
+# Ingress via Traefik with TLS termination. Replace host/secretName with
+# your own domain and certificate secret.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixWeb
+metadata:
+  name: my-zabbix-web
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-web
+    app.kubernetes.io/instance: my-zabbix
+spec:
+  image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"
+  replicas: 1
+
+  # serverRef injected by ZabbixSuite when it links this CR.
+  serverRef:
+    name: my-zabbix-server
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  ingress:
+    enabled: true
+    className: "traefik"
+    host: "zabbix.example.com"   # replace with your domain
+    tls:
+      - secretName: zabbix-web-tls  # replace with your TLS secret
+        hosts:
+          - "zabbix.example.com"
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+      traefik.ingress.kubernetes.io/router.tls: "true"
+      # cert-manager: uncomment to automate TLS certificate provisioning
+      # cert-manager.io/cluster-issuer: letsencrypt-prod
+
+  service:
+    type: ClusterIP

@@ -1,8 +1,73 @@
 # Zabbix Operator — Example Manifests
 
-This directory contains ready-to-use Kubernetes manifests demonstrating the four supported
+This directory contains ready-to-use Kubernetes manifests demonstrating the five supported
 deployment patterns for the Zabbix Operator. Each subdirectory is self-contained and can
 be applied sequentially with `kubectl apply -f`.
+
+---
+
+## Critical API Notes
+
+### `spec.cnpg` — not `spec.database`
+
+The ZabbixSuite CNPG backend section uses the key `cnpg:`, **not** `database:`:
+
+```yaml
+spec:
+  cnpg:                          # ← correct
+    clusterRef: {...}
+    poolerRef: {...}
+    directServiceName: zabbix-pg-rw
+    trustWindow: "1h"
+```
+
+### ZabbixDatabase has NO link mode
+
+`ZabbixDatabase` is **always** created and managed by the ZabbixSuite from the `cnpg:`
+section. There is no `database.existingRef` — the field does not exist. The suite always
+creates `<suite-name>-db` and manages it.
+
+### Link mode uses `name:`, not `existingRef.name:`
+
+```yaml
+# CORRECT — link mode
+server:
+  name: my-zabbix-server    # references a pre-existing ZabbixServer CR
+
+# WRONG — does not exist
+server:
+  existingRef:
+    name: my-zabbix-server
+```
+
+### Inline mode wraps specs under `.spec`
+
+```yaml
+# CORRECT — inline mode
+server:
+  spec:                     # ← required nesting
+    image: "zabbix/..."
+    replicas: 2
+
+# WRONG — fields not at component level
+server:
+  image: "zabbix/..."
+  replicas: 2
+```
+
+### Proxies and Agents in link mode use `existingRef: true` (flat field)
+
+```yaml
+# CORRECT
+agents:
+  - name: my-zabbix-agent
+    existingRef: true       # flat bool on the list entry
+
+# WRONG
+agents:
+  - existingRef:
+      name: my-zabbix-agent
+```
 
 ---
 
@@ -14,6 +79,7 @@ be applied sequentially with `kubectl apply -f`.
 | Standalone / Link | `standalone/link/` | Dev/lab; components managed by different teams |
 | Production HA / Inline | `production-ha/inline/` | Production; HA ZabbixSuite with DB TLS, PSK, all tuning options |
 | Production HA / Decentralized | `production-ha/decentralized/` | Production; each component CR owned independently, then linked |
+| Lifecycle Test | `lifecycle-test/` | Verified end-to-end: fresh install → CNPG major upgrade → Zabbix upgrade |
 
 ---
 
@@ -21,44 +87,53 @@ be applied sequentially with `kubectl apply -f`.
 
 ### Standalone / Inline
 All Zabbix components (server, web, JMX, SNMPTrapper) are declared **inside** the
-ZabbixSuite CR under `spec.server`, `spec.web`, etc. The operator creates and manages
-each component. Best for small teams and test environments.
+ZabbixSuite CR under `spec.server.spec`, `spec.web.spec`, etc. The operator creates and
+manages each component. Best for small teams and test environments.
 
 ```
 ZabbixSuite (inline)
-  ├── server spec embedded
-  ├── web spec embedded
-  ├── jmx spec embedded
-  └── snmpTrapper spec embedded
+  ├── server.spec embedded
+  ├── web.spec embedded
+  ├── jmx.spec embedded (optional)
+  └── snmpTrapper.spec embedded (optional)
 ```
 
 ### Standalone / Link
 Component CRs (ZabbixServer, ZabbixWeb, …) are **pre-created independently**, then
-referenced by name in ZabbixSuite via `existingRef`. The operator updates only
+referenced by name in ZabbixSuite via `name:`. The operator updates only
 `serverRef`/`databaseRef` on linked CRs; everything else in their specs is untouched.
-Useful when different teams own different components.
+ZabbixDatabase is always suite-managed from the `cnpg:` section.
 
 ```
-ZabbixDatabase (standalone CR)   ZabbixServer (standalone CR)   ZabbixWeb (standalone CR)
-        ↑                                  ↑                            ↑
-        └─────────────── ZabbixSuite (link mode, existingRef: true) ───┘
+ZabbixServer (standalone CR)   ZabbixWeb (standalone CR)
+         ↑                              ↑
+         └──────── ZabbixSuite (link mode, name: "my-zabbix-server") ───────┘
+         Suite also creates: ZabbixDatabase (always, from cnpg: section)
 ```
 
 ### Production HA / Inline
 Full high-availability inline ZabbixSuite with:
 - 3-node CNPG PostgreSQL cluster with PgBouncer pooler
-- DB TLS (verify-full) for server↔PostgreSQL connections
+- DB TLS (verify-ca) for server↔PostgreSQL connections
 - PSK encryption for server↔agent/proxy communications
-- Custom credentials Secret
-- Operator sidecar imagePullSecrets via ServiceAccount annotation
-- ExtraEnv tuning from ConfigMap (pollers, cache sizes)
-- LoadBalancer / NodePort Services for external access
-- Dedicated RBAC for the zabbix-suite namespace
+- ExtraEnv tuning from ConfigMap (pollers, cache sizes, SMTP)
+- LoadBalancer Service for external agent/proxy traffic
+- HTTPS ingress with TLS termination at ingress controller
 
 ### Production HA / Decentralized
-Same features as HA/Inline, but each component CR is independently managed.
-Ideal for platform teams that pre-provision CNPG clusters separately from
-application teams that deploy Zabbix workloads.
+Same features as HA/Inline, but each component CR is independently managed by a
+separate team. ZabbixSuite acts as a link-mode aggregator. Ideal for platform teams
+that pre-provision CNPG clusters separately from application teams.
+
+### Lifecycle Test
+A lean, fully verified deployment set. Demonstrates the actual lifecycle tested on a
+7-node live cluster:
+
+1. **Fresh install** (Zabbix 7.0.21 on PG15) — schema auto-loaded via PhaseSchemaInit
+2. **CNPG major upgrade** (PG15 → PG16) — operator-managed, no manual steps
+3. **Zabbix upgrade** (7.0.21 → 7.4.0) — full upgrade state machine, zero manual SQL
+
+Useful as a minimal reference and integration test harness.
 
 ---
 
@@ -96,7 +171,7 @@ a ServiceAccount with `imagePullSecrets` pre-configured.
 
 All patterns require:
 1. **CloudNativePG operator** installed in the cluster
-2. **Zabbix Operator** installed (`kubectl apply -f deploy/00-namespaces.yaml -f deploy/01-crds.yaml -f deploy/02-operator-rbac.yaml -f deploy/03-operator-deployment.yaml`)
+2. **Zabbix Operator** deployed and running (see main README for deploy instructions)
 3. A **ghcr-pull-secret** in the target namespace (or patch the SA as shown above)
 
 ---
@@ -106,13 +181,56 @@ All patterns require:
 Each example directory has numbered files. Apply in order:
 
 ```bash
-# Example: standalone inline
-kubectl apply -f examples/standalone/inline/00-namespace.yaml
-kubectl apply -f examples/standalone/inline/01-secrets.yaml
-kubectl apply -f examples/standalone/inline/02-cnpg-cluster.yaml
-# Wait for CNPG cluster to be ready
-kubectl wait cluster zabbix-pg -n zabbix-dev --for=condition=Ready --timeout=300s
-kubectl apply -f examples/standalone/inline/03-zabbixsuite.yaml
+# Example: lifecycle-test (lean, verified, recommended starting point)
+kubectl apply -f examples/lifecycle-test/00-namespace.yaml
+
+# Pre-create CNPG cluster + pooler (reference your cluster's manifests)
+# kubectl apply -f 04-cnpg-cluster.yaml
+# kubectl apply -f 05-cnpg-pooler.yaml
+kubectl wait cluster zabbix-pg -n zabbix-suite --for=condition=Ready --timeout=300s
+
+# Apply standalone component CRs first (ZabbixSuite links to them)
+kubectl apply -f examples/lifecycle-test/01-zabbixserver.yaml
+kubectl apply -f examples/lifecycle-test/02-zabbixweb.yaml
+kubectl apply -f examples/lifecycle-test/03-zabbixwebservice.yaml
+
+# Apply ZabbixSuite (creates DB + inline agent, links to above CRs)
+kubectl apply -f examples/lifecycle-test/04-zabbixsuite.yaml
+
+# Watch until Ready
+kubectl get zabbixsuite my-zabbix -n zabbix-suite -w
+```
+
+---
+
+## What's New — v2.46
+
+### Staged HA Startup in PostUpgrade
+
+`reconcilePostUpgrade` now uses a two-step startup strategy:
+
+1. **Start 1 replica** in HA mode. Wait for it to become `Available`.
+   - If it crashes (bad image, schema not upgraded), caught immediately with
+     minimal blast radius. Only 1 pod fails, not all of them simultaneously.
+2. **Scale to `spec.replicas`** once the first pod confirms DB connectivity.
+
+This prevents cascading `CrashLoopBackOff` across all pods after an upgrade completes.
+The `replicas:` field in your CR is unchanged — the operator temporarily manages the
+count during the PostUpgrade phase.
+
+### Post-Install Web Readiness Gate
+
+The post-install job (`disableDefaultAgentHost: true`) now waits for the ZabbixWeb
+Deployment to have `AvailableReplicas >= 1` before being created. This ensures
+PHP-FPM is ready to serve the Zabbix JSON-RPC API call. Previously the job could fire
+immediately after `upgradePhase=Running` while the web pod was still starting, causing
+wasted retries.
+
+Set `status.postInstallDone: false` and delete the Job to re-trigger if needed:
+```bash
+kubectl patch zabbixserver my-zabbix-server -n zabbix-suite \
+  --subresource=status --type=merge -p '{"status":{"postInstallDone":false}}'
+kubectl delete job my-zabbix-server-postinstall -n zabbix-suite
 ```
 
 ---
@@ -139,7 +257,7 @@ Zabbix agent at `127.0.0.1:10050`. In container-native deployments the agent bin
 present in the image but disabled — this host permanently shows **"agent not reachable"**
 in the web UI, which is noise.
 
-Set `spec.disableDefaultAgentHost: true` (or `spec.server.disableDefaultAgentHost: true`
+Set `spec.disableDefaultAgentHost: true` (or `spec.server.spec.disableDefaultAgentHost: true`
 in ZabbixSuite inline mode) to automatically delete this host after first startup:
 
 ```yaml
@@ -160,20 +278,5 @@ spec:
 | Host already deleted | Job exits 0 silently; `status.postInstallDone: true` |
 | API auth fails (wrong password) | Job retries 3×; `PostInstallFailed` condition set |
 | To re-run | Set `status.postInstallDone: false` + `kubectl delete job <server>-postinstall` |
-
-**Admin credentials secret** (`zabbix-admin-creds`):
-
-```yaml
-# 01-secrets.yaml — add if Admin password has been changed from factory default
-apiVersion: v1
-kind: Secret
-metadata:
-  name: zabbix-admin-creds
-  namespace: zabbix-suite
-type: Opaque
-stringData:
-  username: "Admin"
-  password: "YOUR_CURRENT_ADMIN_PASSWORD"
-```
 
 All secrets files in this directory include a pre-configured `zabbix-admin-creds` template.

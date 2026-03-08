@@ -20,6 +20,13 @@
 #   - CNPG operator installed
 #   - Zabbix operator installed
 #   - zabbix-pg CNPG cluster Ready
+#
+# INLINE MODE SYNTAX
+#   Component specs are nested under .spec (not at the component level directly):
+#     server:
+#       spec:          ← required nesting
+#         image: ...
+#         replicas: 1
 apiVersion: zabbix.io/v1alpha1
 kind: ZabbixSuite
 metadata:
@@ -29,148 +36,166 @@ metadata:
     app.kubernetes.io/name: zabbix-suite
     app.kubernetes.io/instance: my-zabbix
     environment: development
+  annotations:
+    zabbix-operator.io/managed-by-version: "2.46"
 
 spec:
-  # ── Database ──────────────────────────────────────────────────────────────
-  # The operator creates a ZabbixDatabase CR named "my-zabbix-db" and manages
-  # its lifecycle (connect, schema migration gate, flap detection).
-  database:
+  version: "7.4.0"
+
+  storageReclaimPolicy: Retain
+
+  # ── CNPG database backend ──────────────────────────────────────────────────
+  # The operator creates a ZabbixDatabase CR named "my-zabbix-db" from these refs.
+  # NOTE: ZabbixDatabase has NO link mode — it is ALWAYS suite-managed.
+  #
+  # DB credentials, TLS, and schema options belong on the ZabbixDatabase CR, not here.
+  # directServiceName: used by migration-sentinel during upgrades to bypass PgBouncer
+  # (DDL statements require non-transactional sessions). Always "<cluster-name>-rw".
+  cnpg:
     clusterRef:
       apiVersion: postgresql.cnpg.io/v1
       kind: Cluster
       name: zabbix-pg
       namespace: zabbix-dev
-
-    # directServiceRef: the CNPG-auto-created service for non-pooled DDL queries.
-    # Always "<cluster-name>-rw" for CNPG.
-    directServiceRef: zabbix-pg-rw
-
-    # No pooler in standalone mode — Zabbix server connects directly to CNPG RW service.
-    # poolerRef: (omitted)
-
-    # Credential discovery: auto-discovers from the CNPG bootstrap.initdb.secret
-    # (zabbix-db-creds). Override with credentialsRef if using a different Secret.
-    credentialsRef:
-      secretName: zabbix-db-creds
-      usernameKey: username
-      passwordKey: password
-      database: zabbix
-
-    # TLS: verify-ca using CNPG auto-generated cluster CA.
-    # Enable when CNPG Cluster has certificates: {} set (auto-generates zabbix-pg-ca).
-    # Comment out for development clusters without TLS.
-    dbTLS:
-      mode: verify-ca
-      caSecretRef:
-        name: zabbix-pg-ca
-        key: ca.crt
-
-    # Flap detection: lenient thresholds for dev (single-node CNPG won't flap).
-    flapThresholdCount: 3
-    flapThresholdWindow: "120s"
+    # poolerRef: omit in standalone mode — Zabbix server connects directly.
+    # poolerRef:
+    #   apiVersion: postgresql.cnpg.io/v1
+    #   kind: Pooler
+    #   name: zabbix-pg-pooler-rw
+    #   namespace: zabbix-dev
+    directServiceName: zabbix-pg-rw
+    # Max staleness of CNPG status observation before the operator considers it stale.
     trustWindow: "2h"
 
   # ── Server ────────────────────────────────────────────────────────────────
+  # Inline mode: provide spec under server.spec.
+  # The operator creates a ZabbixServer CR named "my-zabbix-server".
   server:
-    image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
+    spec:
+      image: "zabbix/zabbix-server-pgsql:ubuntu-7.4-latest"
 
-    # 1 replica = no HA; only one pod runs at a time.
-    # Upgrade to 2 for a hot standby in non-dev environments.
-    replicas: 1
+      # 1 replica = no HA; only one pod runs at a time.
+      # Upgrade to 2 for a hot standby in non-dev environments.
+      replicas: 1
 
-    version: "7.4.0"
+      version: "7.4.0"
 
-    # Lease timing — reduced for single-replica (failover still happens on restart).
-    leaseDuration: "20s"
-    renewDeadline: "15s"
-    retryPeriod: "3s"
+      # Lease timing — single-replica; failover still applies on pod restart.
+      leaseDuration: "20s"
+      renewDeadline: "15s"
+      retryPeriod: "3s"
+      deltaNet: "2s"
+      deltaDisk: "1s"
 
-    resources:
-      requests:
-        cpu: "200m"
-        memory: "256Mi"
-      limits:
-        cpu: "1"
-        memory: "1Gi"
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
 
-    # No TLS for server↔agent in dev.
-    tls:
-      mode: "none"
+      upgradeResources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
 
-    # ClusterIP service (in-cluster access only).
-    service:
-      type: ClusterIP
+      # No TLS for server↔agent in dev.
+      tls:
+        mode: "none"
 
-    # Operator sidecar images from ghcr.io/sagh0900 — require imagePullSecrets
-    # on the ServiceAccount (applied via 02-rbac.yaml or manual patch).
-    operatorImages:
-      supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
-      leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
-      migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
+      # ClusterIP service (in-cluster access only).
+      service:
+        type: ClusterIP
 
-    # Minimal tuning for dev — lower pollers and smaller caches.
-    extraEnv:
-      - name: ZBX_STARTPOLLERS
-        value: "3"
-      - name: ZBX_CACHESIZE
-        value: "8M"
-      - name: ZBX_HISTORYCACHESIZE
-        value: "16M"
+      # Operator sidecar images from ghcr.io/sagh0900.
+      # The ServiceAccount (02-rbac.yaml) must have ghcr-pull-secret attached.
+      operatorImages:
+        supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+        leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
+        migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"
 
-    upgradePolicy:
-      allowMajorUpgrade: false
-      requireManualApproval: false
+      # Minimal tuning for dev — lower pollers and smaller caches.
+      extraEnv:
+        - name: ZBX_STARTPOLLERS
+          value: "3"
+        - name: ZBX_CACHESIZE
+          value: "8M"
+        - name: ZBX_HISTORYCACHESIZE
+          value: "16M"
 
-    # ── Post-install automation (v2.43+) ────────────────────────────────────
-    # Deletes the built-in "Zabbix server" monitoring host on first startup.
-    # That host monitors a local agent (127.0.0.1:10050) which is disabled in
-    # containers — it permanently shows "agent not reachable" in the web UI.
-    # Runs once; tracked in status.postInstallDone. Idempotent if host absent.
-    # Uncomment adminCredentialsSecretRef after rotating the Admin password.
-    disableDefaultAgentHost: true
-    # adminCredentialsSecretRef:
-    #   name: zabbix-admin-creds   # Secret keys: username, password
+      upgradePolicy:
+        allowMajorUpgrade: false
+        requireManualApproval: false
+
+      # ── Post-install automation (v2.43+) ────────────────────────────────
+      # Deletes the built-in "Zabbix server" monitoring host on first startup.
+      # That host monitors a local agent (127.0.0.1:10050) which is disabled in
+      # containers — it permanently shows "agent not reachable" in the web UI.
+      #
+      # v2.46: the post-install job waits for ZabbixWeb to have at least one
+      # available replica before being created, so PHP-FPM is always ready to
+      # serve the API call.
+      #
+      # Runs once; tracked in status.postInstallDone. Set to false + delete
+      # the Job to re-run. Idempotent if host already absent.
+      disableDefaultAgentHost: true
+      # adminCredentialsSecretRef:
+      #   name: zabbix-admin-creds   # Secret keys: username, password
 
   # ── Web ───────────────────────────────────────────────────────────────────
+  # Inline mode: provide spec under web.spec.
+  # The operator creates a ZabbixWeb CR named "my-zabbix-web".
   web:
-    image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"
-    replicas: 1
+    spec:
+      image: "zabbix/zabbix-web-nginx-pgsql:ubuntu-7.4-latest"
+      replicas: 1
 
-    resources:
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
 
-    # Ingress: disabled in standalone dev. Access via kubectl port-forward instead:
-    #   kubectl port-forward svc/my-zabbix-web 8080:80 -n zabbix-dev
-    ingress:
-      enabled: false
+      # Ingress: disabled in standalone dev. Access via kubectl port-forward:
+      #   kubectl port-forward svc/my-zabbix-web 8080:80 -n zabbix-dev
+      ingress:
+        enabled: false
 
-    service:
-      type: ClusterIP
+      service:
+        type: ClusterIP
 
   # ── JMX Gateway (optional) ────────────────────────────────────────────────
   # Disabled by default in standalone — enable only if monitoring Java apps.
   jmx:
     enabled: false
-    # Uncomment to enable:
-    # image: "zabbix/zabbix-java-gateway:ubuntu-7.4-latest"
-    # replicas: 1
-    # port: 10052
-    # resources:
-    #   requests:
-    #     cpu: "50m"
-    #     memory: "128Mi"
+    # Uncomment spec block to enable:
+    # spec:
+    #   image: "zabbix/zabbix-java-gateway:ubuntu-7.4-latest"
+    #   replicas: 1
+    #   port: 10052
 
   # ── SNMP Trapper (optional) ────────────────────────────────────────────────
   # Disabled by default — enable if receiving SNMP traps.
   snmpTrapper:
     enabled: false
-    # Uncomment to enable:
-    # image: "zabbix/zabbix-snmptrapper:ubuntu-7.4-latest"
-    # replicas: 1
-    # port: 162
-    # mode: DaemonSet   # DaemonSet recommended for SNMP trap reception
+    # Uncomment spec block to enable:
+    # spec:
+    #   image: "zabbix/zabbix-snmptrapper:ubuntu-7.4-latest"
+    #   replicas: 1
+    #   port: 162
+    #   mode: DaemonSet   # DaemonSet recommended for SNMP trap reception
+
+  upgradePolicy:
+    allowMajorUpgrade: false
+    requireManualApproval: false
+
+  operatorImages:
+    supervisorImage:        "ghcr.io/sagh0900/zabbix-supervisor:2.0"
+    leaseSidecarImage:      "ghcr.io/sagh0900/zabbix-lease-sidecar:2.1"
+    migrationSentinelImage: "ghcr.io/sagh0900/zabbix-migration-sentinel:2.3"

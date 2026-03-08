@@ -1,0 +1,31 @@
+---
+# ZabbixWebService — Lifecycle Test (Decentralized / Link Mode)
+#
+# Standalone CR referenced by ZabbixSuite via spec.webService.name.
+# Provides scheduled PDF report generation via headless Chromium.
+apiVersion: zabbix.io/v1alpha1
+kind: ZabbixWebService
+metadata:
+  name: my-zabbix-webservice
+  namespace: zabbix-suite
+  labels:
+    app.kubernetes.io/name: zabbix-webservice
+    app.kubernetes.io/instance: my-zabbix
+spec:
+  image: "zabbix/zabbix-web-service:ubuntu-7.4-latest"
+  replicas: 1
+
+  # serverRef injected by ZabbixSuite when it links this CR.
+  serverRef:
+    name: my-zabbix-server
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+  service:
+    type: ClusterIP
